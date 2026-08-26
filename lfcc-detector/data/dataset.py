@@ -85,11 +85,24 @@ class AudioDataset(torch.utils.data.Dataset):
         if self.root_dir and not os.path.isabs(audio_path):
             audio_path = self.root_dir / audio_path
 
-        # Load audio
+        # Load audio (try soundfile first, fallback to torchaudio)
         try:
-            audio, sr = torchaudio.load(audio_path)
-        except Exception as e:
-            raise RuntimeError(f"Failed to load {audio_path}: {e}")
+            import soundfile as sf
+            audio_np, sr = sf.read(audio_path, dtype='float32')
+            audio = torch.from_numpy(audio_np)
+            # soundfile returns (samples,) for mono, ensure (1, samples) for consistency
+            if audio.ndim == 1:
+                audio = audio.unsqueeze(0)
+        except Exception as e_sf:
+            # Fallback to torchaudio if soundfile fails
+            try:
+                audio, sr = torchaudio.load(audio_path)
+            except Exception as e_ta:
+                raise RuntimeError(
+                    f"Failed to load {audio_path} with both soundfile and torchaudio.\n"
+                    f"  soundfile error: {e_sf}\n"
+                    f"  torchaudio error: {e_ta}"
+                )
 
         # Resample if needed
         if sr != self.sample_rate:
