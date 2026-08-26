@@ -83,7 +83,11 @@ class LFCCLCNNDetector:
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        try:
+             checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        except TypeError:
+    # Backward compatibility for older PyTorch versions where weights_only doesn't exist
+            checkpoint = torch.load(checkpoint_path, map_location='cpu')
 
         # Handle different checkpoint formats
         if 'model_state_dict' in checkpoint:
