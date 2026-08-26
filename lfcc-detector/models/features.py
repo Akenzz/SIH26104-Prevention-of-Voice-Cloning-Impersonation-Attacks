@@ -211,4 +211,4 @@ if __name__ == '__main__':
     print(f"   Min: {lfcc_deltas.min():.4f}")
     print(f"   Max: {lfcc_deltas.max():.4f}")
 
-    print("\n✅ LFCC extraction tests passed!")
+    print("\n[PASS] LFCC extraction tests passed!")

@@ -71,7 +71,7 @@ class LFCCLCNNDetector:
         else:
             self.model_version = "untrained"
 
-        print(f"✓ Loaded {self.model_name} detector")
+        print(f"[OK] Loaded {self.model_name} detector")
         print(f"  Version: {self.model_version}")
         print(f"  Device: {self.device}")
         print(f"  Sample rate: {self.sample_rate} Hz")
@@ -244,7 +244,7 @@ def test_detector_contract():
     assert isinstance(logit, float), f"logit must be float, got {type(logit)}"
     assert isinstance(embedding, np.ndarray), f"embedding must be numpy array, got {type(embedding)}"
     assert embedding.shape == (128,), f"embedding must be 128-dim, got {embedding.shape}"
-    print("   ✓ Output types correct")
+    print("   [OK] Output types correct")
     print(f"     Logit: {logit:.4f} (type: {type(logit).__name__})")
     print(f"     Embedding shape: {embedding.shape}")
 
@@ -252,7 +252,7 @@ def test_detector_contract():
     print("\n2. Testing deterministic inference:")
     logit2, _ = detector.forward(audio)
     assert abs(logit - logit2) < 1e-6, "Model must be deterministic"
-    print(f"   ✓ Deterministic (logit1={logit:.6f}, logit2={logit2:.6f})")
+    print(f"   [OK] Deterministic (logit1={logit:.6f}, logit2={logit2:.6f})")
 
     # Test 3: Batch handling
     print("\n3. Testing batch inference:")
@@ -260,7 +260,7 @@ def test_detector_contract():
     logits, embeddings = detector.batch_forward(audio_batch)
     assert logits.shape == (8,), f"Expected (8,), got {logits.shape}"
     assert embeddings.shape == (8, 128), f"Expected (8, 128), got {embeddings.shape}"
-    print(f"   ✓ Batch processing works")
+    print(f"   [OK] Batch processing works")
     print(f"     Input: {audio_batch.shape}")
     print(f"     Logits: {logits.shape}")
     print(f"     Embeddings: {embeddings.shape}")
@@ -270,29 +270,29 @@ def test_detector_contract():
     # Too short
     short_audio = np.random.randn(32000).astype(np.float32) * 0.1  # 2 seconds
     logit_short, _ = detector.forward(short_audio)
-    print(f"   ✓ Short audio (2s) handled: logit={logit_short:.4f}")
+    print(f"   [OK] Short audio (2s) handled: logit={logit_short:.4f}")
 
     # Too long
     long_audio = np.random.randn(96000).astype(np.float32) * 0.1  # 6 seconds
     logit_long, _ = detector.forward(long_audio)
-    print(f"   ✓ Long audio (6s) handled: logit={logit_long:.4f}")
+    print(f"   [OK] Long audio (6s) handled: logit={logit_long:.4f}")
 
     # Test 5: Input format conversion (numpy vs torch)
     print("\n5. Testing input format conversion:")
     audio_torch = torch.from_numpy(audio).float()
     logit_torch, _ = detector.forward(audio_torch)
     assert abs(logit - logit_torch) < 1e-6, "Numpy and torch inputs should give same result"
-    print(f"   ✓ Torch tensor input works (logit={logit_torch:.4f})")
+    print(f"   [OK] Torch tensor input works (logit={logit_torch:.4f})")
 
     # Test 6: Probability conversion
     print("\n6. Testing probability conversion:")
     prob = detector.predict_probability(logit)
     assert 0 <= prob <= 1, f"Probability must be in [0, 1], got {prob}"
-    print(f"   ✓ Probability conversion works")
+    print(f"   [OK] Probability conversion works")
     print(f"     Logit: {logit:.4f} -> Probability: {prob:.4f}")
 
     print("\n" + "="*60)
-    print("✅ All contract tests PASSED!")
+    print("[PASS] All contract tests PASSED!")
     print("="*60)
 
 

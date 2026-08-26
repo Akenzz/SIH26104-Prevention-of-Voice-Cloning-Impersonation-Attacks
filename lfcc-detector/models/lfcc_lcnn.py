@@ -321,4 +321,4 @@ if __name__ == '__main__':
     print(f"   Output shape: {y.shape}")
     print(f"   Expected: channels reduced by half (64 -> 32)")
 
-    print("\n✅ LFCC-LCNN model tests passed!")
+    print("\n[PASS] LFCC-LCNN model tests passed!")
