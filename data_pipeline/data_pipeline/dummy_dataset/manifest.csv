@@ -1,0 +1,17 @@
+path,label,split,source_dataset,speaker_id,utterance_id,generator_id,language,codec,duration_s,license,consent
+data_pipeline\dummy_dataset\wavs\utt_0001.wav,bonafide,train,Synthetic_TestBench,spk_tr_01,utt_0001,none,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0002.wav,bonafide,train,Synthetic_TestBench,spk_tr_02,utt_0002,none,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0003.wav,bonafide,train,Synthetic_TestBench,spk_tr_03,utt_0003,none,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0004.wav,bonafide,train,Synthetic_TestBench,spk_tr_04,utt_0004,none,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0005.wav,spoof,train,Synthetic_TestBench,spk_tr_01,utt_0005,gen_A,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0006.wav,spoof,train,Synthetic_TestBench,spk_tr_02,utt_0006,gen_B,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0007.wav,spoof,train,Synthetic_TestBench,spk_tr_03,utt_0007,gen_A,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0008.wav,spoof,train,Synthetic_TestBench,spk_tr_04,utt_0008,gen_B,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0009.wav,bonafide,dev,Synthetic_TestBench,spk_dv_01,utt_0009,none,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0010.wav,bonafide,dev,Synthetic_TestBench,spk_dv_02,utt_0010,none,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0011.wav,spoof,dev,Synthetic_TestBench,spk_dv_01,utt_0011,gen_A,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0012.wav,spoof,dev,Synthetic_TestBench,spk_dv_02,utt_0012,gen_B,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0013.wav,bonafide,eval,Synthetic_TestBench,spk_ev_01,utt_0013,none,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0014.wav,bonafide,eval,Synthetic_TestBench,spk_ev_02,utt_0014,none,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0015.wav,spoof,eval,Synthetic_TestBench,spk_ev_01,utt_0015,gen_C,en,pcm_16k,4.0,MIT,yes
+data_pipeline\dummy_dataset\wavs\utt_0016.wav,spoof,eval,Synthetic_TestBench,spk_ev_02,utt_0016,gen_C,en,pcm_16k,4.0,MIT,yes

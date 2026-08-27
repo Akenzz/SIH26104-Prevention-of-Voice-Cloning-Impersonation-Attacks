@@ -1,0 +1,33 @@
+{
+  "dataset": "manifest",
+  "split": "eval",
+  "model": {
+    "name": "LFCC-LCNN",
+    "version": "best_lfcc_lcnn"
+  },
+  "metrics": {
+    "eer": 1.0,
+    "threshold": 0.020814556628465652,
+    "roc_auc": 0.0,
+    "pr_auc": 0.29166666666666663,
+    "confusion_matrix": {
+      "true_negatives": 0,
+      "false_positives": 2,
+      "false_negatives": 2,
+      "true_positives": 0
+    },
+    "num_bonafide": 2,
+    "num_spoof": 2
+  },
+  "latency_ms": {
+    "mean_ms": 13.06552500318503,
+    "p95_ms": 19.466330001887396,
+    "p99_ms": 20.652866001764774
+  },
+  "config": {
+    "sample_rate": 16000,
+    "window_sec": 4.0,
+    "manifest": "data_pipeline/dummy_dataset/manifest.csv",
+    "checkpoint": "lfcc-detector/checkpoints/best_lfcc_lcnn.pth"
+  }
+}

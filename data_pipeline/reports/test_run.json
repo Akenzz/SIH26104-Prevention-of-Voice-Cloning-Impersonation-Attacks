@@ -1,0 +1,30 @@
+{
+  "dataset": "DummyDataset",
+  "split": "train",
+  "model": {
+    "name": "DummyModel",
+    "version": "1.0"
+  },
+  "metrics": {
+    "eer": 0.375,
+    "threshold": 1.0346055565729835,
+    "roc_auc": 0.5625,
+    "pr_auc": 0.6422619047619047,
+    "confusion_matrix": {
+      "true_negatives": 3,
+      "false_positives": 1,
+      "false_negatives": 2,
+      "true_positives": 2
+    },
+    "num_bonafide": 4,
+    "num_spoof": 4
+  },
+  "latency_ms": {
+    "mean_ms": 0.014525001461151987,
+    "p95_ms": 0.02215499989688396,
+    "p99_ms": 0.024591002147644755
+  },
+  "config": {
+    "sample_rate": 16000
+  }
+}
