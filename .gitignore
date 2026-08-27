@@ -95,3 +95,21 @@ lfcc-detector/checkpoints/
 
 # HuggingFace model cache (downloaded automatically)
 ~/.cache/huggingface/
+
+# ML model checkpoints
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+
+# Generated audio
+*.wav
+*.flac
+*.mp3
+
+# Training outputs
+checkpoints/
+runs/
+outputs/
+EOF
