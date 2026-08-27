@@ -22,6 +22,7 @@ import os
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from expert1.dataset import SpeechDataset, WINDOW_SAMPLES
 from expert1.model import WavLMClassifier
@@ -39,7 +40,7 @@ NUM_WORKERS     = 0         # Set > 0 if your system has multiple CPU cores
 SEED            = 42
 
 
-def train_one_epoch(model, loader, optimizer, criterion, device):
+def train_one_epoch(model, loader, optimizer, criterion, device, epoch, total_epochs):
     """Run one full pass over the training set. Returns mean loss."""
     model.train()
     # Keep backbone frozen / in eval mode even during model.train()
@@ -48,7 +49,14 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
     total_loss  = 0.0
     total_items = 0
 
-    for waveform, labels in loader:
+    pbar = tqdm(
+        loader,
+        desc=f"Epoch {epoch:>3}/{total_epochs} [train]",
+        unit="batch",
+        leave=False,
+        dynamic_ncols=True,
+    )
+    for waveform, labels in pbar:
         waveform = waveform.to(device)          # (B, T)
         labels   = labels.float().to(device)    # (B,)  — BCEWithLogitsLoss wants float
 
@@ -63,6 +71,9 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
         total_loss  += loss.item() * len(labels)
         total_items += len(labels)
 
+        # Live loss readout in the progress bar
+        pbar.set_postfix(loss=f"{loss.item():.4f}")
+
     return total_loss / total_items
 
 
@@ -75,7 +86,8 @@ def evaluate(model, loader, criterion, device):
     total_items   = 0
     total_correct = 0
 
-    for waveform, labels in loader:
+    pbar = tqdm(loader, desc="              [dev]  ", unit="batch", leave=False, dynamic_ncols=True)
+    for waveform, labels in pbar:
         waveform = waveform.to(device)
         labels   = labels.to(device)
 
@@ -138,10 +150,10 @@ def main(args):
     print("─" * 60)
 
     for epoch in range(1, args.epochs + 1):
-        train_loss            = train_one_epoch(
-            model, train_loader, optimizer, criterion, device
+        train_loss        = train_one_epoch(
+            model, train_loader, optimizer, criterion, device, epoch, args.epochs
         )
-        dev_loss, dev_acc     = evaluate(model, dev_loader, criterion, device)
+        dev_loss, dev_acc = evaluate(model, dev_loader, criterion, device)
 
         print(f"{epoch:>5}  {train_loss:>10.4f}  {dev_loss:>9.4f}  {dev_acc:>7.1%}")
 

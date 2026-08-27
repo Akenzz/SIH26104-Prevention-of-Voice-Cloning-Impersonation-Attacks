@@ -71,3 +71,27 @@ Thumbs.db
 # Local configuration
 config.local.*
 settings.local.*
+
+# ─── Heavy data / model files (never push these) ───────────────────────────────
+
+# Raw dataset — audio files and zip archives
+data1/
+*.zip
+*.tar.gz
+*.flac
+*.wav
+
+# Generated manifests (re-created by repath_manifest.py)
+expert1/data/asvspoof_manifest.csv
+expert1/data/audio/
+data_pipeline/manifests/
+
+# Model checkpoints
+expert1/checkpoints/
+lfcc-detector/checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# HuggingFace model cache (downloaded automatically)
+~/.cache/huggingface/
