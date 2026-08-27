@@ -18,11 +18,11 @@ This is **not** identity verification, **not** the dashboard (task E), and **not
 | LFCC-LCNN (Expert 3) real model wired + `state_dict` load | **done + tested** |
 | WavLM (Expert 1) real model wiring | **TODO in `experts/wavlm.py`** |
 | Fusion scaffolding (`FUSION_MODE=single` default) | done |
-| Identity-sigmoid calibrator + EMA + policy | done (fit script ready; run on dev set to replace stub) |
+| Platt calibrator fitted on ASVspoof19 dev (in-domain) + EMA + policy | **done + tested** |
 | Fail-safe: silence / clip / decode / seq gap → `unavailable` | done + tested |
 | WAV client, soak (memory + p95 latency) | done |
 
-Default `EXPERTS=dummy`. **`EXPERTS=lfcc` now runs the real LFCC-LCNN detector** — it downloads `best_lfcc_lcnn.pth`, loads it into the vendored architecture (`experts/lfcc_model/`), and emits real spoof logits with a 128-dim embedding. WavLM (`experts/wavlm.py`) is still stubbed: requesting `wavlm` downloads the file, `torch.load`s it, then raises `NotImplementedError` with the checkpoint keys printed. The calibrator is still the identity stub, so `smoothed_probability` is an honest-but-unfitted mapping of the real logit until `artifacts/calibrator.json` is replaced from a dev-set fit.
+Default `EXPERTS=dummy`. **`EXPERTS=lfcc` now runs the real LFCC-LCNN detector** — it downloads `best_lfcc_lcnn.pth`, loads it into the vendored architecture (`experts/lfcc_model/`), and emits real spoof logits with a 128-dim embedding. WavLM (`experts/wavlm.py`) is still stubbed: requesting `wavlm` downloads the file, `torch.load`s it, then raises `NotImplementedError` with the checkpoint keys printed. The calibrator is a **Platt fit on the ASVspoof2019 LA dev split** (`kind: "platt"`, `a=1.32`, `b=-0.52`), so `smoothed_probability` is a real calibrated probability of the LFCC logit **on in-domain audio** — see the cross-corpus caveat below.
 
 ## Layout
 
@@ -82,27 +82,45 @@ python scripts/soak_test.py --minutes 10
 
 ## Fitting the calibrator
 
-The shipped `artifacts/calibrator.json` is an **identity sigmoid** — an honest but
-unfitted `sigmoid(logit)`. To make `smoothed_probability` a real probability,
-fit Platt `a,b` on a held-out dev split (labelled `bonafide`/`spoof`):
+The shipped `artifacts/calibrator.json` is a **Platt fit** (`kind: "platt"`,
+`a=1.32`, `b=-0.52`, version `platt-lfcc-asvspoof19dev-v1`) of the LFCC-LCNN
+logit, fitted on the **ASVspoof2019 LA dev** split — the same held-out split the
+checkpoint was selected on. `smoothed_probability = sigmoid(a*logit + b)` is
+therefore a real calibrated probability, not an identity passthrough.
+
+Reproduce it (needs `soundfile` + the ASVspoof2019 LA dev audio; the manifest
+paths point at `D:\DatasetSIH\LA`):
 
 ```bash
 # prove the fitting math with no audio/model (synthetic, numpy only):
 python scripts/fit_calibrator.py --self-test
 
-# real fit against Task B's dev manifest (needs soundfile + the dev audio):
+# the real in-domain fit that produced the shipped artifact:
 pip install soundfile
 python scripts/fit_calibrator.py \
     --manifest ../data_pipeline/manifests/asvspoof19_dev.csv \
-    --split dev --expert lfcc --out artifacts/calibrator.json
+    --split dev --expert lfcc --balance --limit 3000 --eval-frac 0.2 \
+    --version platt-lfcc-asvspoof19dev-v1 --out artifacts/calibrator.json
 ```
 
-It reuses the backend's own resampler and the real expert adapter, so the logits
-it fits on come from the same code path that runs live. It prints pre/post ECE,
-Brier, log-loss, and dev EER, then writes a versioned `kind: "platt"` artifact.
-Re-tune `artifacts/policy.json` bands afterward, and **refit** if the expert or
+`--balance` subsamples to equal bonafide/spoof (ASVspoof dev is ~9:1 spoof) so
+the dataset prior is **not** baked into `b`; the policy bands set the operating
+point. It reuses the backend's own resampler and the real expert adapter, so the
+logits it fits on come from the same code path that runs live. On the shipped fit
+(3000 clips, 2400 fit / 600 held out): classes separate cleanly (spoof logit
+mean +4.71, bonafide −10.69), **held-out EER 0.0000**, and the fit **halves**
+held-out calibration error vs the identity map (ECE 0.0084→0.0043, log-loss
+0.0101→0.0059). Re-tune `artifacts/policy.json` and **refit** if the expert or
 `FUSION_MODE=fused` output changes (the calibrator must see the same logit the
 policy does).
+
+> **Cross-corpus caveat — read before demoing.** This calibrator (and the LFCC
+> model under it) is validated **in-domain only**. The same checkpoint scores
+> **chance-level on MLAAD** (EER 0.442, real audiobook speech scored *more*
+> spoof-like than TTS), so a Platt fit there produced an *inverted* slope. If the
+> demo audio is not ASVspoof2019-like, treat the probability as unreliable — the
+> honest failure mode, not a fitted one. Do not fit the calibrator on a corpus
+> the model does not actually separate.
 
 ## WebSocket protocol
 
@@ -136,7 +154,7 @@ Outgoing score message (every completed window):
   "raw_per_expert_scores": {"dummy": 0.1},
   "model_version": {"dummy": "dummy-v0"},
   "threshold_version": "policy-v0",
-  "calibrator_version": "identity-sigmoid-v0",
+  "calibrator_version": "platt-lfcc-asvspoof19dev-v1",
   "fusion_version": "fusion-identity-v0",
   "fusion_mode": "single",
   "dropped_frames": false,
@@ -231,4 +249,4 @@ Never default to “real” / `low` on a failure path.
 - It does not prove caller identity.
 - Dummy scores are not detection results.
 - Fusion is not “better because two models exist.”
-- The identity calibrator is not a fitted probability until `calibrator.json` is replaced from a real dev-set fit.
+- The calibrated probability is trustworthy **only in-domain**: it is fitted and validated on ASVspoof2019 LA, and the same model is chance-level cross-corpus (MLAAD EER 0.442). Out-of-domain, the number is not a real probability.

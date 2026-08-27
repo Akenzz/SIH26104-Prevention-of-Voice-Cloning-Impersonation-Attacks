@@ -58,7 +58,14 @@ def _sigmoid(z: np.ndarray) -> np.ndarray:
 
 
 def fit_platt(logits: np.ndarray, labels: np.ndarray, max_iter: int = 200,
-              tol: float = 1e-10) -> tuple[float, float]:
+              tol: float = 1e-7) -> tuple[float, float]:
+    """Robust Platt scaling (Lin, Lin & Weng 2007) with backtracking line search.
+
+    Fits P(spoof) = 1/(1+exp(A*f+B)); returns it in this backend's convention
+    p = sigmoid(a*f+b), i.e. a = -A, b = -B. The line search guarantees the
+    negative-log-likelihood decreases every step, so it cannot diverge even when
+    the scores saturate or are perfectly separable (a plain Newton step can).
+    """
     f = np.asarray(logits, dtype=np.float64)
     y = np.asarray(labels, dtype=np.float64)
     n_pos = float(np.sum(y > 0.5))
@@ -69,25 +76,44 @@ def fit_platt(logits: np.ndarray, labels: np.ndarray, max_iter: int = 200,
     lo = 1.0 / (n_neg + 2.0)
     t = np.where(y > 0.5, hi, lo)
 
-    a, b = 1.0, 0.0
+    def nll(A: float, B: float) -> float:
+        z = f * A + B
+        # numerically stable t*z + log(1+exp(-z)) branch
+        pos = z >= 0
+        out = np.empty_like(z)
+        out[pos] = t[pos] * z[pos] + np.log1p(np.exp(-z[pos]))
+        out[~pos] = (t[~pos] - 1.0) * z[~pos] + np.log1p(np.exp(z[~pos]))
+        return float(np.sum(out))
+
+    A = 0.0
+    B = float(np.log((n_neg + 1.0) / (n_pos + 1.0)))  # base-rate-aware init
+    fval = nll(A, B)
     for _ in range(max_iter):
-        p = _sigmoid(a * f + b)
-        g_a = float(np.sum((p - t) * f))
-        g_b = float(np.sum(p - t))
-        w = p * (1.0 - p)
-        h_aa = float(np.sum(w * f * f)) + 1e-12
-        h_ab = float(np.sum(w * f))
-        h_bb = float(np.sum(w)) + 1e-12
-        det = h_aa * h_bb - h_ab * h_ab
-        if abs(det) < 1e-18:
+        z = f * A + B
+        p = _sigmoid(-z)  # P(y=1) under 1/(1+exp(z))
+        d2 = p * (1.0 - p)
+        h11 = float(np.sum(f * f * d2)) + 1e-12
+        h22 = float(np.sum(d2)) + 1e-12
+        h21 = float(np.sum(f * d2))
+        g1 = float(np.sum(f * (t - p)))
+        g2 = float(np.sum(t - p))
+        if abs(g1) < 1e-5 and abs(g2) < 1e-5:
             break
-        da = (h_bb * g_a - h_ab * g_b) / det
-        db = (-h_ab * g_a + h_aa * g_b) / det
-        a -= da
-        b -= db
-        if max(abs(da), abs(db)) < tol:
+        det = h11 * h22 - h21 * h21
+        dA = -(h22 * g1 - h21 * g2) / det
+        dB = -(-h21 * g1 + h11 * g2) / det
+        gd = g1 * dA + g2 * dB
+        step = 1.0
+        while step >= 1e-10:
+            newA, newB = A + step * dA, B + step * dB
+            newf = nll(newA, newB)
+            if newf < fval + 1e-4 * step * gd:
+                A, B, fval = newA, newB, newf
+                break
+            step *= 0.5
+        if step < 1e-10 or max(abs(step * dA), abs(step * dB)) < tol:
             break
-    return a, b
+    return -A, -B
 
 
 # --------------------------------------------------------------------------- #
@@ -199,9 +225,26 @@ def collect_scores(args) -> tuple[np.ndarray, np.ndarray, str]:
                 p = (base / p).resolve()
             rows.append((p, y))
 
-    if args.limit:
+    if args.shuffle:
+        import random
+
+        random.Random(args.seed).shuffle(rows)
+    if args.balance:
+        import random
+
+        pos = [r for r in rows if r[1] > 0.5]
+        neg = [r for r in rows if r[1] <= 0.5]
+        k = min(len(pos), len(neg))
+        if args.limit:
+            k = min(k, args.limit // 2)
+        rows = pos[:k] + neg[:k]
+        random.Random(args.seed + 1).shuffle(rows)  # interleave classes for a balanced eval tail
+    elif args.limit:
         rows = rows[: args.limit]
-    print(f"manifest={manifest.name} rows={len(rows)} split={args.split!r}")
+    n_pos_rows = sum(1 for _, y in rows if y > 0.5)
+    print(f"manifest={manifest.name} rows={len(rows)} (spoof={n_pos_rows} "
+          f"bonafide={len(rows) - n_pos_rows}) split={args.split!r} "
+          f"shuffle={args.shuffle} balance={args.balance} seed={args.seed}")
 
     logits: list[float] = []
     labels: list[float] = []
@@ -263,6 +306,16 @@ def main() -> int:
     parser.add_argument("--version", default=None, help="calibrator version label")
     parser.add_argument("--max-windows-per-clip", type=int, default=1)
     parser.add_argument("--limit", type=int, default=0, help="cap clips (quick trials)")
+    parser.add_argument("--shuffle", dest="shuffle", action="store_true", default=True,
+                        help="deterministically shuffle rows before --limit/eval split (default on)")
+    parser.add_argument("--no-shuffle", dest="shuffle", action="store_false")
+    parser.add_argument("--seed", type=int, default=0, help="shuffle/eval-split seed")
+    parser.add_argument("--balance", action="store_true",
+                        help="subsample to equal bonafide/spoof before scoring, so the "
+                             "calibrator is not biased by a skewed dataset prior (e.g. "
+                             "ASVspoof dev is ~9:1 spoof). Policy bands set the operating point.")
+    parser.add_argument("--eval-frac", type=float, default=0.2,
+                        help="fraction held out to report honest (out-of-fit) metrics")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
@@ -276,15 +329,50 @@ def main() -> int:
     if len(logits) == 0:
         raise SystemExit("no scored windows; check manifest paths and labels")
 
+    lg_pos = logits[labels > 0.5]
+    lg_neg = logits[labels <= 0.5]
+    print(f"logit separation  spoof: mean={lg_pos.mean():+.3f} std={lg_pos.std():.3f}   "
+          f"bonafide: mean={lg_neg.mean():+.3f} std={lg_neg.std():.3f}   "
+          f"AUC-proxy(EER)={eer(logits, labels):.4f}")
+
     n_pos = int(np.sum(labels > 0.5))
     n_neg = int(len(labels) - n_pos)
     print(f"collected {len(logits)} windows (spoof={n_pos} bonafide={n_neg})")
 
-    a, b = fit_platt(logits, labels)
-    print("calibration quality (dev):")
-    report("identity", logits, labels, 1.0, 0.0)
-    report("fitted  ", logits, labels, a, b)
-    print(f"  EER (dev, threshold-free) = {eer(logits, labels):.4f}")
+    # Hold out a fold for honest (out-of-fit) metric reporting. Rows were already
+    # shuffled in collect_scores, so a tail slice is a random stratified-ish split.
+    n_eval = int(len(logits) * args.eval_frac) if args.eval_frac > 0 else 0
+    if n_eval < 20 or (len(logits) - n_eval) < 20:
+        n_eval = 0  # too small to hold out; fit + report in-sample
+    fit_lg, fit_lb = logits[: len(logits) - n_eval], labels[: len(labels) - n_eval]
+    ev_lg, ev_lb = logits[len(logits) - n_eval:], labels[len(labels) - n_eval:]
+
+    a, b = fit_platt(fit_lg, fit_lb)
+    print(f"fit on {len(fit_lg)} windows; eval on {len(ev_lg)} held-out windows")
+    if n_eval:
+        print("calibration quality (HELD-OUT eval fold):")
+        report("identity", ev_lg, ev_lb, 1.0, 0.0)
+        report("fitted  ", ev_lg, ev_lb, a, b)
+        print(f"  EER (held-out, threshold-free) = {eer(ev_lg, ev_lb):.4f}")
+    else:
+        print("calibration quality (in-sample; dataset too small to hold out):")
+        report("identity", fit_lg, fit_lb, 1.0, 0.0)
+        report("fitted  ", fit_lg, fit_lb, a, b)
+    print("calibration quality (fit fold, for reference):")
+    report("identity", fit_lg, fit_lb, 1.0, 0.0)
+    report("fitted  ", fit_lg, fit_lb, a, b)
+
+    ev_metrics = None
+    if n_eval:
+        p_ev = _sigmoid(a * ev_lg + b)
+        ev_metrics = {
+            "n_eval_windows": int(n_eval),
+            "ece": round(ece(p_ev, ev_lb), 5),
+            "brier": round(brier(p_ev, ev_lb), 5),
+            "log_loss": round(log_loss(p_ev, ev_lb), 5),
+            "eer": round(eer(ev_lg, ev_lb), 5),
+            "ece_identity": round(ece(_sigmoid(ev_lg), ev_lb), 5),
+        }
 
     version = args.version or f"platt-{args.expert}-{datetime.now(timezone.utc):%Y%m%d}"
     artifact = {
@@ -295,18 +383,27 @@ def main() -> int:
         "note": (
             f"Platt fit for expert '{args.expert}' ({model_version}) on "
             f"{Path(args.manifest).name} split={args.split}; "
-            f"{len(logits)} windows (spoof={n_pos}, bonafide={n_neg}). "
-            "Refit if the expert or fusion output changes."
+            f"fit on {len(fit_lg)} windows, {n_eval} held out for eval "
+            f"(total spoof={n_pos}, bonafide={n_neg})"
+            + (", class-balanced so the dataset prior is not baked in (policy bands "
+               "set the operating point)" if args.balance else "")
+            + ". Refit if the expert, the calibration corpus, or the fusion output "
+            "changes; validity depends on the fit corpus matching the deployment "
+            "distribution."
         ),
         "metadata": {
             "expert": args.expert,
             "model_version": model_version,
             "manifest": Path(args.manifest).name,
             "split": args.split,
-            "n_windows": len(logits),
+            "balanced": bool(args.balance),
+            "n_windows_total": len(logits),
+            "n_windows_fit": len(fit_lg),
             "n_spoof": n_pos,
             "n_bonafide": n_neg,
             "max_windows_per_clip": args.max_windows_per_clip,
+            "shuffle_seed": args.seed,
+            "held_out_eval": ev_metrics,
             "fitted_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         },
     }
