@@ -71,8 +71,3 @@ Thumbs.db
 # Local configuration
 config.local.*
 settings.local.*
-
-# Expert1 — generated data and model artifacts
-expert1/data/audio/
-expert1/data/manifest.csv
-expert1/checkpoints/
