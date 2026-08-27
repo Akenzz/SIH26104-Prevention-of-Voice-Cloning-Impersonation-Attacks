@@ -58,6 +58,9 @@ results/
 outputs/
 experiments/
 
+# Task C local model cache (HF downloads; never commit)
+realtime-backend/model_cache/
+
 # Temporary files
 *.tmp
 *.bak

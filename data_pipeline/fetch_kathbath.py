@@ -4,41 +4,14 @@ data_pipeline/fetch_kathbath.py
 Downloads AI4Bharat Kathbath (real Indic speech, 12 Indian languages)
 from HuggingFace and builds the 12-column manifest.
 
-Source  : HuggingFace  ai4bharat/Kathbath  (GATED — requires HF login + acceptance)
-Size    : ~1,684 hours across 12 Indian languages
-Languages: Bengali, Gujarati, Kannada, Hindi, Malayalam, Marathi, Odia,
-           Punjabi, Sanskrit, Tamil, Telugu, Urdu
-Labels  : ALL rows are "bonafide" — this is a REAL speech corpus, no fakes.
-
-Purpose (from MD spec):
-  1. Expose the model to real Indic speech during TRAINING so it doesn't learn
-     "English accent = real, Indian accent = suspicious."
-  2. Become the "real-only safety set" for Person H → measures false positive
-     rate on real Indian speech (MD spec Task H line 170).
-
-HF login: huggingface-cli login     (or HUGGING_FACE_HUB_TOKEN env var)
-
-Audio saved to  : E:\\DatasetSIH\\kathbath\\  (default)
-Manifests:
-    data_pipeline/manifests/kathbath_train.csv   (train split)
-    data_pipeline/manifests/kathbath_eval.csv    (eval split — H's safety set)
-
-Run:
-    # Step 1: accept terms at https://huggingface.co/datasets/ai4bharat/Kathbath
-    # Step 2: login
-    huggingface-cli login
-
-    # Step 3: download (per-language to save space if needed)
-    python data_pipeline/fetch_kathbath.py
-    python data_pipeline/fetch_kathbath.py --languages hi ta te  # Hindi, Tamil, Telugu only
-    python data_pipeline/fetch_kathbath.py --dataset-root F:\\MyData\\kathbath
+Direct Parquet reader approach — completely bypasses datasets library Audio encoding.
 """
 
 import os
 import sys
 import argparse
+import io as _io
 from pathlib import Path
-
 import pandas as pd
 
 repo_root = Path(__file__).resolve().parent.parent
@@ -50,7 +23,6 @@ DEFAULT_AUDIO_ROOT = Path(os.environ.get("KATHBATH_ROOT", r"E:\DatasetSIH\kathba
 MANIFEST_DIR       = repo_root / "data_pipeline" / "manifests"
 HF_DATASET_ID      = "ai4bharat/Kathbath"
 
-# 12 Kathbath languages with ISO 639-1 codes
 KATHBATH_LANGUAGES = {
     "bengali":   "bn",
     "gujarati":  "gu",
@@ -67,24 +39,16 @@ KATHBATH_LANGUAGES = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Download + build manifest
-# ---------------------------------------------------------------------------
-
 def download_and_build_manifest(
     audio_root: Path,
-    languages: list,  # list of Kathbath language names or ISO codes
+    languages: list,
 ) -> tuple:
-    """Returns (train_csv_path, eval_csv_path)."""
-
     audio_root.mkdir(parents=True, exist_ok=True)
     MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Resolve language filter
     if not languages:
         target_langs = list(KATHBATH_LANGUAGES.keys())
     else:
-        # Accept both full names and ISO codes
         iso_to_name = {v: k for k, v in KATHBATH_LANGUAGES.items()}
         target_langs = []
         for l in languages:
@@ -93,24 +57,25 @@ def download_and_build_manifest(
                 target_langs.append(l_lower)
             elif l_lower in iso_to_name:
                 target_langs.append(iso_to_name[l_lower])
-            else:
-                print(f"  [WARN] Unknown language '{l}' — skipping.")
 
-    print(f"\n[1/3] Downloading Kathbath from HuggingFace...")
+    hf_cache = audio_root.parent / ".hf_cache"
+    hf_cache.mkdir(parents=True, exist_ok=True)
+    os.environ["HF_DATASETS_CACHE"] = str(hf_cache)
+    os.environ["HF_HOME"]           = str(hf_cache)
+    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+    os.environ["DISABLE_TORCHCODEC"]              = "1"
+
+    print(f"\n[1/3] Processing Kathbath from HuggingFace...")
     print(f"      Dataset   : {HF_DATASET_ID}")
     print(f"      Languages : {target_langs}")
     print(f"      Audio dir : {audio_root}\n")
 
     try:
-        from datasets import load_dataset
-    except ImportError:
-        print("[FAIL] Run: pip install datasets soundfile")
-        sys.exit(1)
-
-    try:
         import soundfile as sf
-    except ImportError:
-        print("[FAIL] Run: pip install soundfile")
+        from huggingface_hub import snapshot_download
+    except ImportError as e:
+        print(f"[FAIL] Missing dependency: {e}")
+        print("       Run: pip install soundfile pandas huggingface_hub")
         sys.exit(1)
 
     all_train_rows = []
@@ -120,103 +85,130 @@ def download_and_build_manifest(
         iso_code = KATHBATH_LANGUAGES[lang_name]
         print(f"\n  Language: {lang_name} ({iso_code})")
 
-        try:
-            # Kathbath is organised by language as config/subset name
-            ds = load_dataset(HF_DATASET_ID, lang_name, trust_remote_code=True)
-        except Exception as exc:
-            err = str(exc)
-            if "gated" in err.lower() or "401" in err or "403" in err:
-                print(f"    [FAIL] Gated dataset — HuggingFace login required.")
-                print(f"           1. Visit: https://huggingface.co/datasets/{HF_DATASET_ID}")
-                print(f"           2. Accept terms, then: huggingface-cli login")
-                sys.exit(1)
-            elif "not found" in err.lower() or "config" in err.lower():
-                print(f"    [WARN] Language config '{lang_name}' not found in HF dataset. Trying 'train' split ...")
-                try:
-                    ds = load_dataset(HF_DATASET_ID, trust_remote_code=True)
-                except Exception as e2:
-                    print(f"    [FAIL] {e2}")
-                    continue
-            else:
-                print(f"    [FAIL] {exc}")
-                continue
+        local_dir = hf_cache / "parquet" / f"kathbath_{lang_name}"
+        local_dir.mkdir(parents=True, exist_ok=True)
 
+        try:
+            snapshot_download(
+                repo_id=HF_DATASET_ID,
+                repo_type="dataset",
+                cache_dir=str(hf_cache / "hub"),
+                local_dir=str(local_dir),
+                allow_patterns=[f"data/{lang_name}/*", f"*{lang_name}*"],
+                ignore_patterns=["*.md", "*.json", "*.txt"],
+            )
+        except Exception as exc:
+            print(f"    [WARN] Download/snapshot error for {lang_name}: {exc}")
+
+        parquet_files = sorted(local_dir.rglob("*.parquet"))
+        if not parquet_files:
+            # Fallback: search anywhere in hf_cache for matching parquets
+            parquet_files = sorted((hf_cache / "hub").rglob(f"*{lang_name}*.parquet"))
+
+        if not parquet_files:
+            print(f"    [WARN] No Parquet files found for {lang_name}")
+            continue
+
+        print(f"    Found {len(parquet_files)} Parquet file(s). Reading directly...\n")
         lang_dir = audio_root / lang_name
         lang_dir.mkdir(exist_ok=True)
 
-        for hf_split_name, hf_split_data in ds.items():
-            # Map HF split names to our schema splits
-            if "train" in hf_split_name.lower():
-                row_split = "train"
-                target_list = all_train_rows
-            else:
-                row_split = "eval"
-                target_list = all_eval_rows
+        import pyarrow.parquet as pq
 
-            n_this = len(hf_split_data)
-            print(f"    {hf_split_name} → split='{row_split}'  {n_this:,} samples")
+        i = 0
+        for pq_file in parquet_files:
+            row_split = "eval" if ("valid" in pq_file.name.lower() or "test" in pq_file.name.lower()) else "train"
+            target_list = all_eval_rows if row_split == "eval" else all_train_rows
 
-            for i, item in enumerate(hf_split_data):
+            try:
+                table = pq.read_table(str(pq_file))
+                # Convert pyarrow table to list of dicts for easy iteration
+                batch = table.to_pylist()
+            except Exception as exc:
+                print(f"    [WARN] Could not read {pq_file.name}: {exc}")
+                continue
+
+            for row_data in batch:
                 try:
-                    audio_info = item.get("audio", {})
-                    arr        = audio_info.get("array")
-                    sr         = audio_info.get("sampling_rate", 16000)
-                    speaker_id = str(item.get("speaker_id", item.get("speaker", f"spk_{i:05d}")))
-                    file_name  = str(item.get("path", item.get("file", f"{lang_name}_{i:06d}")))
-                    stem       = Path(file_name).stem
+                    # audio is a dictionary with 'bytes' and 'path'
+                    audio_col = row_data.get("audio")
+                    arr, sr   = None, 16000
+                    
+                    if audio_col and isinstance(audio_col, dict):
+                        raw_bytes = audio_col.get("bytes")
+                        raw_path  = audio_col.get("path")
+                        if raw_bytes:
+                            try:
+                                arr, sr = sf.read(_io.BytesIO(raw_bytes), dtype="float32")
+                            except Exception:
+                                import torchaudio
+                                tensor, sr = torchaudio.load(_io.BytesIO(raw_bytes))
+                                arr = tensor.numpy().T
+                        elif raw_path and Path(raw_path).exists():
+                            try:
+                                arr, sr = sf.read(raw_path, dtype="float32")
+                            except Exception:
+                                import torchaudio
+                                tensor, sr = torchaudio.load(raw_path)
+                                arr = tensor.numpy().T
 
+                    speaker_id = str(row_data.get("speaker_id", row_data.get("speaker", f"spk_{i:05d}")))
+                    
+                    # Some datasets use fname, some use path
+                    file_name = row_data.get("fname") or row_data.get("path") or row_data.get("file")
+                    if not file_name and audio_col and isinstance(audio_col, dict):
+                        file_name = audio_col.get("path")
+                    if not file_name:
+                        file_name = f"{lang_name}_{i:06d}"
+                        
+                    stem = Path(file_name).stem
                     out_path = lang_dir / f"{stem}.wav"
+                    
                     if not out_path.exists() and arr is not None:
                         sf.write(str(out_path), arr, sr)
 
                     if out_path.exists():
+                        dur = round(len(arr) / sr, 3) if arr is not None else 0.0
                         target_list.append({
                             "path":           str(out_path.resolve()),
-                            "label":          "bonafide",   # Kathbath is ALL real speech
+                            "label":          "bonafide",
                             "split":          row_split,
                             "source_dataset": "Kathbath",
                             "speaker_id":     speaker_id,
                             "utterance_id":   stem,
-                            "generator_id":   "none",       # bonafide, no generator
+                            "generator_id":   "none",
                             "language":       iso_code,
                             "codec":          "pcm_16k",
-                            "duration_s":     round(len(arr) / sr, 3) if arr is not None else 0.0,
+                            "duration_s":     dur,
                             "license":        "CC-BY-4.0",
                             "consent":        "yes",
                         })
 
-                    if (i + 1) % 1000 == 0:
-                        print(f"      [{i+1:>6}/{n_this}] saved {len(target_list):,} rows", flush=True)
+                    i += 1
+                    if i % 2000 == 0:
+                        print(f"      [{i:>6} done] train={len(all_train_rows):,}  eval={len(all_eval_rows):,}", flush=True)
 
                 except Exception as exc:
                     if i < 5:
-                        print(f"      [WARN] Item {i}: {exc}")
+                        print(f"      [WARN] Row {i} failed: {exc}")
+                    i += 1
 
-        print(f"    Done — train={len(all_train_rows):,}  eval={len(all_eval_rows):,}")
-
-    # Write manifests
     train_csv = eval_csv = None
 
     if all_train_rows:
         df = pd.DataFrame(all_train_rows, columns=REQUIRED_COLUMNS)
         train_csv = MANIFEST_DIR / "kathbath_train.csv"
         df.to_csv(train_csv, index=False)
-        langs_in = df["language"].unique().tolist()
-        print(f"\n  [OK] Train manifest: {train_csv}  ({len(df):,} rows)  languages={langs_in}")
+        print(f"\n  [OK] Train manifest: {train_csv}  ({len(df):,} rows)")
 
     if all_eval_rows:
         df = pd.DataFrame(all_eval_rows, columns=REQUIRED_COLUMNS)
         eval_csv = MANIFEST_DIR / "kathbath_eval.csv"
         df.to_csv(eval_csv, index=False)
-        langs_in = df["language"].unique().tolist()
-        print(f"  [OK] Eval manifest : {eval_csv}  ({len(df):,} rows)  languages={langs_in}")
+        print(f"  [OK] Eval manifest : {eval_csv}  ({len(df):,} rows)")
 
     return train_csv, eval_csv
 
-
-# ---------------------------------------------------------------------------
-# Validate
-# ---------------------------------------------------------------------------
 
 def validate_manifest(csv_path: Path, label: str) -> None:
     df     = pd.read_csv(csv_path)
@@ -228,31 +220,13 @@ def validate_manifest(csv_path: Path, label: str) -> None:
     else:
         langs  = df["language"].unique().tolist()
         n_rows = len(df)
-        spoof_count = (df["label"] == "spoof").sum()
-        print(f"  [PASS] {label}: {n_rows:,} rows  |  {len(langs)} languages  |  "
-              f"{spoof_count} spoof rows (should be 0)")
-        if spoof_count > 0:
-            print(f"  [WARN] Kathbath should contain only bonafide rows!")
+        print(f"  [PASS] {label}: {n_rows:,} rows  |  languages={langs}")
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Download AI4Bharat Kathbath and build train/eval manifests."
-    )
-    parser.add_argument(
-        "--dataset-root", type=str, default=str(DEFAULT_AUDIO_ROOT),
-        help=f"Directory to save audio files (default: {DEFAULT_AUDIO_ROOT}). Set KATHBATH_ROOT env var."
-    )
-    parser.add_argument(
-        "--languages", nargs="*", default=[],
-        help="Specific languages to download. Default: all 12. "
-             "Use full names (hindi, tamil) or ISO codes (hi, ta). "
-             "Example: --languages hi ta te bn kn"
-    )
+    parser = argparse.ArgumentParser(description="Download AI4Bharat Kathbath and build train/eval manifests.")
+    parser.add_argument("--dataset-root", type=str, default=str(DEFAULT_AUDIO_ROOT))
+    parser.add_argument("--languages", nargs="*", default=["hi"])
     args = parser.parse_args()
 
     audio_root = Path(args.dataset_root)
@@ -260,16 +234,6 @@ def main():
     print("=" * 65)
     print("Kathbath — AI4Bharat Indic Speech Pipeline")
     print("=" * 65)
-    print(f"  Audio root : {audio_root}")
-    print(f"  Languages  : {args.languages if args.languages else 'all 12'}")
-    print(f"  Note       : ALL labels are bonafide (real speech corpus)")
-    print(f"  Purpose    : Indic training exposure + H's real-only safety set")
-
-    if not args.languages:
-        print("\n  Available languages:")
-        for name, iso in KATHBATH_LANGUAGES.items():
-            print(f"    {iso}  {name}")
-        print("\n  Tip: Start with --languages hi ta te to test before downloading all.\n")
 
     train_csv, eval_csv = download_and_build_manifest(
         audio_root=audio_root,

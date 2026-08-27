@@ -1,0 +1,7 @@
+{
+  "version": "identity-sigmoid-v0",
+  "kind": "identity_sigmoid",
+  "note": "Passthrough until a Platt/isotonic fit on held-out dev data replaces this file.",
+  "a": 1.0,
+  "b": 0.0
+}
