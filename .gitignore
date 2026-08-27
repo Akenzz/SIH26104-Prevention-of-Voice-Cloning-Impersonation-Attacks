@@ -1,67 +1,118 @@
-# Python
+# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-env/
+
+# Virtual environments
+.venv/
 venv/
+env/
 ENV/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Packaging
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+.eggs/
+pip-wheel-metadata/
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache/
 
-# PyTorch
-*.pth
-*.pt
-checkpoints/
-logs/
-runs/
+# Type checking
+.mypy_cache/
+.pyre/
+.pytype/
 
-# Data (never commit large datasets)
-data/raw/
-data/processed/
-*.flac
-*.wav
-*.mp3
-*.ogg
-*.opus
+# Jupyter
+.ipynb_checkpoints/
 
-# IDE
+# IDEs / editors
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
 
-# Model outputs
-results/
-outputs/
-experiments/
+# Logs
+*.log
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
 
 # Task C local model cache (HF downloads; never commit)
 realtime-backend/model_cache/
 
 # Temporary files
 *.tmp
-*.bak
-*.log
+*.temp
+
+# Ruff
+.ruff_cache/
+
+# Pyright
+.pyright/
+
+# Secrets / private keys
+*.pem
+*.key
+
+# Local configuration
+config.local.*
+settings.local.*
+
+# ─── Heavy data / model files (never push these) ───────────────────────────────
+
+# Raw dataset — audio files and zip archives
+data1/
+*.zip
+*.tar.gz
+*.flac
+*.wav
+
+# Generated manifests (re-created by repath_manifest.py)
+expert1/data/asvspoof_manifest.csv
+expert1/data/audio/
+data_pipeline/manifests/
+
+# Model checkpoints
+expert1/checkpoints/
+lfcc-detector/checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# HuggingFace model cache (downloaded automatically)
+~/.cache/huggingface/
+
+# ML model checkpoints
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+
+# Generated audio
+*.wav
+*.flac
+*.mp3
+
+# Training outputs
+checkpoints/
+runs/
+outputs/
+EOF
