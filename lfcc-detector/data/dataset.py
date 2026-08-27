@@ -42,7 +42,27 @@ class AudioDataset(torch.utils.data.Dataset):
         self.sample_rate = sample_rate
         self.window_samples = int(window_sec * sample_rate)
         self.root_dir = Path(root_dir) if root_dir else None
-        self.augment = augment
+        self.augment = augment and (split == 'train')  # never augment dev/eval
+
+        # Build augmentation pipeline once (reused per sample)
+        self._aug_pipeline = None
+        if self.augment:
+            try:
+                import sys, pathlib
+                # Allow import from either lfcc-detector or repo root context
+                repo_root = pathlib.Path(__file__).resolve().parent.parent.parent
+                if str(repo_root) not in sys.path:
+                    sys.path.insert(0, str(repo_root))
+                from data_pipeline.augmentation import TrainingAugmentationPipeline
+                self._aug_pipeline = TrainingAugmentationPipeline(
+                    apply_codec=False,   # disable by default (requires ffmpeg)
+                    apply_noise=True,
+                    apply_rir=False,
+                    sample_rate=sample_rate,
+                )
+                print(f"[INFO] Augmentation active: {self._aug_pipeline.active_augmentations}")
+            except Exception as e:
+                print(f"[WARN] Could not load augmentation pipeline: {e}. Running without augmentation.")
 
         # Load manifest
         self.df = pd.read_csv(manifest_path)
@@ -152,14 +172,9 @@ class AudioDataset(torch.utils.data.Dataset):
         return audio, label, metadata
 
     def _augment(self, audio: torch.Tensor) -> torch.Tensor:
-        """
-        Apply audio augmentation (placeholder for now).
-        Will be implemented in augmentation.py module.
-        """
-        # TODO: Import and apply augmentations from augmentation.py
-        # - Codec degradation (AMR-NB, Opus)
-        # - Additive noise
-        # - RIR convolution
+        """Apply audio augmentation via data_pipeline.augmentation.TrainingAugmentationPipeline."""
+        if self._aug_pipeline is not None:
+            return self._aug_pipeline(audio)
         return audio
 
     def get_label_distribution(self) -> dict:

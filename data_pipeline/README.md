@@ -1,8 +1,164 @@
 # data_pipeline — Task B: Data Pipeline, Manifest & Evaluation Harness
 
-> **Status:** Complete. All ASVspoof 2019 LA manifests are generated, zero-leakage verified, and the evaluation harness is ready to use.
+> **Status:** ASVspoof 2019 LA complete ✅. Additional datasets (In-the-Wild, MLAAD, Kathbath) download scripts ready.
 >
-> This folder is the **single source of truth** every model trains and is measured against. Person A (WavLM), Person D (LFCC-LCNN), and Person K (AASIST) all consume the same manifests and evaluation harness from here.
+> This folder is the **single source of truth** every model trains and is measured against. Person A (WavLM), Person D (LFCC-LCNN), Person H (Evaluation), and Person K (AASIST) all consume the same manifests and evaluation harness from here.
+
+---
+
+## For Person H — Running Sliced Evaluation
+
+Person H uses `evaluate_slices.py` to produce the results table for the pitch deck. Each condition is reported **separately, never pooled** (MD spec requirement).
+
+```bash
+# Run per-condition evaluation against the LFCC-LCNN checkpoint (works today)
+python data_pipeline/evaluate_slices.py \
+    --checkpoint  lfcc-detector/checkpoints/best_lfcc_lcnn.pth \
+    --manifests   data_pipeline/manifests/asvspoof19_eval.csv \
+    --output-dir  data_pipeline/reports/sliced_eval \
+    --model-name  LFCC-LCNN
+
+# Once more datasets are downloaded, add them:
+python data_pipeline/evaluate_slices.py \
+    --checkpoint  lfcc-detector/checkpoints/best_lfcc_lcnn.pth \
+    --manifests   data_pipeline/manifests/asvspoof19_eval.csv \
+                  data_pipeline/manifests/in_the_wild_eval_ood.csv \
+                  data_pipeline/manifests/mlaad_eval_ood.csv \
+                  data_pipeline/manifests/kathbath_eval.csv \
+    --output-dir  data_pipeline/reports/sliced_eval \
+    --model-name  LFCC-LCNN
+```
+
+**Outputs in `data_pipeline/reports/sliced_eval/`:**
+- `sliced_eval_results.json` — machine-readable full results
+- `sliced_eval_report.md` — Markdown table formatted for the pitch slide
+
+**Slices produced automatically:**
+
+| Slice | What it tests | MD spec reference |
+|-------|--------------|-------------------|
+| Per attack/generator (A07–A19) | Model vs each unseen attack system | Task H line 167 |
+| Per source dataset | Within-corpus vs cross-corpus | Task H line 165-166 |
+| Per language | One EER per language (never averaged) | Task H line 168 |
+| OOD cross-corpus (eval_ood) | In-the-Wild / held-out MLAAD | Task H line 166 |
+| Real-only safety set | False positive rate on real speech | Task H line 170 |
+
+> [!IMPORTANT]
+> **Never pool slices.** A strong average hiding a failed language is a claim you cannot defend in Q&A (MD spec). Report every named condition separately.
+
+---
+
+## Dataset Download Guide
+
+Audio files go to `E:\DatasetSIH\` (external drive). Manifests (CSVs, ~MBs) stay in the repo.
+
+### Dataset Sizes at a Glance
+
+| Dataset | Size | Access | Purpose | Command |
+|---------|------|--------|---------|---------|
+| ASVspoof 2019 LA | 7 GB | ✅ Already downloaded | Primary train/eval | Already done |
+| **In-the-Wild** | **8.16 GB** | ✅ Open (HuggingFace) | OOD eval ONLY | See below |
+| **MLAAD-tiny** | **3.54 GB** | ✅ Open (HuggingFace) | Multilingual train | See below |
+| **Kathbath** (3 langs) | **~5 GB** | 🔒 Gated (HF login) | Indic bonafide | See below |
+| ASVspoof 2021 LA eval | ~8 GB | 🔒 Registration | Channel robustness | See below |
+| Kathbath (all 12 langs) | ~50 GB | 🔒 Gated | Full Indic coverage | Optional |
+| MLAAD full | 1000+ hours | 🔒 Gated | Full multilingual | Optional later |
+
+### Prerequisites
+
+```powershell
+pip install datasets soundfile huggingface_hub
+```
+
+---
+
+### 1. In-the-Wild (8.16 GB) — Open, auto-download
+
+No login needed. Saves to `E:\DatasetSIH\in_the_wild\`.
+
+```powershell
+cd "D:\SIH\SIH26104-Prevention-of-Voice-Cloning-Impersonation-Attacks"
+python data_pipeline/fetch_in_the_wild.py
+```
+
+> Split: `eval_ood` — **never used in training**. MD spec line 54: "cross-corpus evaluation only, never train on it."
+
+---
+
+### 2. MLAAD-tiny (3.54 GB) — Open, auto-download
+
+No login needed. Saves to `E:\DatasetSIH\mlaad\`.
+
+```powershell
+python data_pipeline/fetch_mlaad.py --use-tiny
+```
+
+Held-out TTS systems (VITS, YourTTS) automatically get `split=eval_ood` — becomes H's **unseen generator** test slice.
+
+For full MLAAD (gated, 1000+ hours):
+```powershell
+# 1. Accept terms at: https://huggingface.co/datasets/mueller91/MLAAD
+# 2. Login:
+huggingface-cli login
+# 3. Download:
+python data_pipeline/fetch_mlaad.py
+```
+
+---
+
+### 3. Kathbath — Indic Real Speech (Gated, HF login required)
+
+Recommended first run: start with 3 languages (~5 GB) before downloading all 12 (~50 GB).
+
+```powershell
+# Step 1: accept terms at https://huggingface.co/datasets/ai4bharat/Kathbath
+# Step 2: login
+huggingface-cli login
+
+# Step 3: download Hindi, Tamil, Telugu first (covers major Indic languages)
+python data_pipeline/fetch_kathbath.py --languages hi ta te
+
+# Step 4: add more languages later
+python data_pipeline/fetch_kathbath.py --languages bn kn mr
+```
+
+All labels are `bonafide` (real speech). `kathbath_eval.csv` becomes **H's real-only safety set** to measure the false positive rate on real Indic speech.
+
+Available languages: Bengali (bn), Gujarati (gu), Hindi (hi), Kannada (kn), Malayalam (ml), Marathi (mr), Odia (or), Punjabi (pa), Sanskrit (sa), Tamil (ta), Telugu (te), Urdu (ur)
+
+---
+
+### 4. ASVspoof 2021 LA eval — Manual Download (Registration Required)
+
+ASVspoof 2021 requires registration at the official site. **Download only the LA eval set** (~8 GB) — you don't need the full 34 GB DF set for now.
+
+**Steps:**
+1. Register at: **https://www.asvspoof.org/index2021.html**
+2. Download only: `ASVspoof2021_LA_eval.tar.gz` (~8 GB)
+3. Extract to: `E:\DatasetSIH\asvspoof2021\LA\`
+4. Run the converter (to be built):
+   ```powershell
+   python data_pipeline/fetch_asvspoof2021.py --dataset-root E:\DatasetSIH\asvspoof2021
+   ```
+
+> **Alternative HuggingFace mirror** (no registration, already transcoded):
+> `SpeechAntiSpoofingBenchmarks/ASVspoof2021_LA` — check if still available at time of use.
+
+---
+
+## Recommended Download Order
+
+```
+TODAY:
+  1. python data_pipeline/fetch_in_the_wild.py    # 8.16 GB, no login, ~30 min
+  2. python data_pipeline/fetch_mlaad.py --use-tiny  # 3.54 GB, no login, ~15 min
+
+AFTER HF LOGIN:
+  3. python data_pipeline/fetch_kathbath.py --languages hi ta te  # ~5 GB
+
+WHEN ASVSPOOF 2021 IS REGISTERED:
+  4. python data_pipeline/fetch_asvspoof2021.py   # ~8 GB, manual step required
+```
 
 ---
 

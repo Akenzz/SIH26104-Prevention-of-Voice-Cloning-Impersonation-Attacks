@@ -25,7 +25,8 @@ REQUIRED_COLUMNS: List[str] = [
 ]
 
 VALID_LABELS: Set[str] = {'bonafide', 'spoof'}
-VALID_SPLITS: Set[str] = {'train', 'dev', 'eval'}
+VALID_SPLITS: Set[str] = {'train', 'dev', 'eval', 'eval_ood'}
+# eval_ood = cross-corpus / OOD evaluation only — NEVER loaded by any training DataLoader
 
 
 def validate_schema(df: pd.DataFrame) -> List[str]:

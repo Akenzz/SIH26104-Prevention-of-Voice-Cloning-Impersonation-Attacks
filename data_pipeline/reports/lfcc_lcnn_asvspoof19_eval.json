@@ -1,0 +1,33 @@
+{
+  "dataset": "asvspoof19_eval",
+  "split": "eval",
+  "model": {
+    "name": "LFCC-LCNN",
+    "version": "best_lfcc_lcnn"
+  },
+  "metrics": {
+    "eer": 0.1326146806066275,
+    "threshold": -7.719508647918701,
+    "roc_auc": 0.9302860617141849,
+    "pr_auc": 0.9912952346123292,
+    "confusion_matrix": {
+      "true_negatives": 6380,
+      "false_positives": 975,
+      "false_negatives": 8475,
+      "true_positives": 55407
+    },
+    "num_bonafide": 7355,
+    "num_spoof": 63882
+  },
+  "latency_ms": {
+    "mean_ms": 11.324576179495933,
+    "p95_ms": 19.303919991943967,
+    "p99_ms": 33.990364002529525
+  },
+  "config": {
+    "sample_rate": 16000,
+    "window_sec": 4.0,
+    "manifest": "D:\\SIH\\SIH26104-Prevention-of-Voice-Cloning-Impersonation-Attacks\\data_pipeline\\manifests\\asvspoof19_eval.csv",
+    "checkpoint": "D:\\SIH\\SIH26104-Prevention-of-Voice-Cloning-Impersonation-Attacks\\lfcc-detector\\checkpoints\\best_lfcc_lcnn.pth"
+  }
+}
