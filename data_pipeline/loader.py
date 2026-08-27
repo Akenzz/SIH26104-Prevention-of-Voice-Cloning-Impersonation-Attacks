@@ -8,7 +8,7 @@ import torchaudio
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Tuple, Optional, Dict
+from typing import Callable, Optional, Tuple, Dict
 
 try:
     from schema import validate_schema
@@ -23,8 +23,21 @@ class ManifestAudioDataset(torch.utils.data.Dataset):
         split: Optional[str] = 'train',
         window_sec: float = 4.0,
         sample_rate: int = 16000,
-        root_dir: Optional[str] = None
+        root_dir: Optional[str] = None,
+        augmentation_pipeline: Optional[Callable] = None,
     ):
+        """
+        Args:
+            manifest_path:        Path to a 12-column manifest CSV.
+            split:                If set, only rows where split==this value are loaded.
+                                  Pass None to load all rows.
+            window_sec:           Fixed window length in seconds (pad/crop applied).
+            sample_rate:          Target sample rate; audio is resampled if needed.
+            root_dir:             Optional prefix prepended to relative audio paths.
+            augmentation_pipeline: A callable (audio_tensor) -> audio_tensor applied
+                                  ONLY when split=='train'.  Pass None for no augmentation.
+                                  Use data_pipeline.augmentation.TrainingAugmentationPipeline.
+        """
         self.manifest_path = Path(manifest_path)
         if not self.manifest_path.exists():
             raise FileNotFoundError(f"Manifest not found: {self.manifest_path}")
@@ -35,6 +48,8 @@ class ManifestAudioDataset(torch.utils.data.Dataset):
         self.sample_rate = sample_rate
         self.window_samples = int(window_sec * sample_rate)
         self.root_dir = Path(root_dir) if root_dir else None
+        # Augmentation only fires for training split
+        self.augmentation_pipeline = augmentation_pipeline if split == 'train' else None
 
         # Schema check
         errors = validate_schema(self.df)
@@ -89,6 +104,10 @@ class ManifestAudioDataset(torch.utils.data.Dataset):
             audio = audio[start:start + self.window_samples]
 
         label = self.label_map[row['label']]
+
+        # Apply augmentation (training split only, guarded in __init__)
+        if self.augmentation_pipeline is not None:
+            audio = self.augmentation_pipeline(audio)
 
         metadata = {
             'path': str(audio_path),

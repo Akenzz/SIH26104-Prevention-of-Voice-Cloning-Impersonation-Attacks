@@ -102,8 +102,8 @@ def run_experiment(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run complete model benchmark experiment")
     parser.add_argument("--checkpoint", type=str, default="lfcc-detector/checkpoints/best_lfcc_lcnn.pth")
-    parser.add_argument("--manifest", type=str, default="data_pipeline/dummy_dataset/manifest.csv")
-    parser.add_argument("--output-report", type=str, default="data_pipeline/reports/lfcc_lcnn_eval")
+    parser.add_argument("--manifest", type=str, default="data_pipeline/manifests/asvspoof19_eval.csv")
+    parser.add_argument("--output-report", type=str, default="data_pipeline/reports/lfcc_lcnn_asvspoof19_eval")
     parser.add_argument("--split", type=str, default="eval")
     args = parser.parse_args()
 

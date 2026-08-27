@@ -40,63 +40,85 @@ def compute_eer(bonafide_scores: np.ndarray, spoof_scores: np.ndarray):
     return eer, threshold
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, device, grad_clip=1.0):
+def train_one_epoch(model, dataloader, criterion, optimizer, device, grad_clip=1.0,
+                    log_every: int = 50):
     model.train()
     total_loss = 0.0
     correct = 0
     total = 0
-    
+    num_batches = len(dataloader)
+
     for batch_idx, (audios, labels, _) in enumerate(dataloader):
         audios = audios.to(device)
         labels = labels.to(device).float().unsqueeze(1)  # (batch, 1)
-        
+
         optimizer.zero_grad()
         logits, _ = model(audios, return_embedding=False)
         loss = criterion(logits, labels)
-        
+
         loss.backward()
         if grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
-        
+
         total_loss += loss.item() * len(labels)
         preds = (torch.sigmoid(logits) > 0.5).float()
         correct += (preds == labels).sum().item()
         total += len(labels)
-        
+
+        # Real-time per-batch progress
+        if (batch_idx + 1) % log_every == 0 or (batch_idx + 1) == num_batches:
+            running_loss = total_loss / total
+            running_acc  = correct / total * 100
+            print(
+                f"  Batch [{batch_idx+1:>4}/{num_batches}]  "
+                f"loss: {running_loss:.4f}  acc: {running_acc:.1f}%",
+                flush=True
+            )
+
     avg_loss = total_loss / total if total > 0 else 0.0
-    accuracy = correct / total if total > 0 else 0.0
+    accuracy  = correct / total if total > 0 else 0.0
     return avg_loss, accuracy
 
 
-def evaluate(model, dataloader, criterion, device):
+def evaluate(model, dataloader, criterion, device, log_every: int = 100):
     model.eval()
     total_loss = 0.0
     bonafide_scores = []
     spoof_scores = []
-    
+    num_batches = len(dataloader)
+
+    print(f"  [Dev eval — {num_batches} batches]", flush=True)
+
     with torch.no_grad():
-        for audios, labels, _ in dataloader:
+        for batch_idx, (audios, labels, _) in enumerate(dataloader):
             audios = audios.to(device)
             labels = labels.to(device).float().unsqueeze(1)
-            
+
             logits, _ = model(audios, return_embedding=False)
             loss = criterion(logits, labels)
-            
+
             total_loss += loss.item() * len(labels)
-            
+
             scores = logits.squeeze(1).cpu().numpy()
             target_labels = labels.squeeze(1).cpu().numpy()
-            
+
             for score, label in zip(scores, target_labels):
                 if label == 0:
                     bonafide_scores.append(score)
                 else:
                     spoof_scores.append(score)
-                    
+
+            if (batch_idx + 1) % log_every == 0 or (batch_idx + 1) == num_batches:
+                print(
+                    f"  Dev batch [{batch_idx+1:>4}/{num_batches}]  "
+                    f"processed: {len(bonafide_scores) + len(spoof_scores)} samples",
+                    flush=True
+                )
+
     total_samples = len(bonafide_scores) + len(spoof_scores)
     avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
-    
+
     bonafide_scores = np.array(bonafide_scores)
     spoof_scores = np.array(spoof_scores)
     
@@ -110,8 +132,8 @@ def evaluate(model, dataloader, criterion, device):
 
 def main():
     parser = argparse.ArgumentParser(description="Train LFCC-LCNN voice cloning detector")
-    parser.add_argument("--train-manifest", type=str, default="data/manifests/dummy_test.csv")
-    parser.add_argument("--dev-manifest", type=str, default="data/manifests/dummy_test.csv")
+    parser.add_argument("--train-manifest", type=str, default="../data_pipeline/manifests/asvspoof19_train.csv")
+    parser.add_argument("--dev-manifest", type=str, default="../data_pipeline/manifests/asvspoof19_dev.csv")
     parser.add_argument("--output-dir", type=str, default="checkpoints")
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=2)
@@ -127,15 +149,29 @@ def main():
         learning_rate=args.lr
     )
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"[INFO] Using device: {device}")
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        print(f"[INFO] Using device: cuda ({torch.cuda.get_device_name(0)})")
+    else:
+        device = torch.device('cpu')
+        print(
+            "[WARN] CUDA not available — training on CPU will be very slow.\n"
+            "       Install CUDA-enabled PyTorch: https://pytorch.org/get-started/locally/"
+        )
 
     # Load datasets
     train_dataset = AudioDataset(config.train_manifest, split='train', window_sec=config.window_sec)
-    dev_dataset = AudioDataset(config.dev_manifest, split='train', window_sec=config.window_sec)
+    dev_dataset = AudioDataset(config.dev_manifest, split='dev', window_sec=config.window_sec)
 
-    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, collate_fn=collate_fn)
-    dev_loader = DataLoader(dev_dataset, batch_size=config.batch_size, shuffle=False, collate_fn=collate_fn)
+    # num_workers=0 is required on Windows to avoid DataLoader multiprocessing issues
+    train_loader = DataLoader(
+        train_dataset, batch_size=config.batch_size, shuffle=True,
+        collate_fn=collate_fn, num_workers=0, pin_memory=(device.type == 'cuda')
+    )
+    dev_loader = DataLoader(
+        dev_dataset, batch_size=config.batch_size, shuffle=False,
+        collate_fn=collate_fn, num_workers=0, pin_memory=(device.type == 'cuda')
+    )
 
     # Initialize model
     model = LFCCLCNNWithFeatureExtraction(

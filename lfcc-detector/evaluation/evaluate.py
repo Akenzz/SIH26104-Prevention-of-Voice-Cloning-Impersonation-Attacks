@@ -67,7 +67,7 @@ def evaluate_checkpoint(checkpoint_path: str, manifest_path: str, batch_size: in
 def main():
     parser = argparse.ArgumentParser(description="Evaluate LFCC-LCNN voice cloning detector")
     parser.add_argument("--checkpoint", type=str, default="checkpoints/best_lfcc_lcnn.pth")
-    parser.add_argument("--manifest", type=str, default="data/manifests/dummy_test.csv")
+    parser.add_argument("--manifest", type=str, default="../data_pipeline/manifests/asvspoof19_eval.csv")
     parser.add_argument("--output-json", type=str, default=None)
     args = parser.parse_args()
 

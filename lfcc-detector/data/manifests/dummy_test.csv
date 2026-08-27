@@ -1,5 +1,0 @@
-path,label,split,source_dataset,speaker_id,utterance_id,generator_id,language,duration_s
-data\raw\dummy1.wav,bonafide,train,test,spk01,utt01,none,en,4.0
-data\raw\dummy2.wav,spoof,train,test,spk02,utt02,A17,en,4.0
-data\raw\dummy3.wav,bonafide,dev,test,spk03,utt03,none,en,4.0
-data\raw\dummy4.wav,spoof,eval,test,spk04,utt04,A19,en,4.0
