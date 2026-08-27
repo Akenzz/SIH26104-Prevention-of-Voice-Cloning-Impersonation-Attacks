@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
 
 from calibration import load_calibrator
 from config import ARTIFACTS_DIR, Settings
-from experts.dummy import DummyExpert
+from experts.loader import load_experts
 from fusion import load_fusion
 from pipeline import ConnectionState
 from policy import load_policy
@@ -39,12 +39,20 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--minutes", type=float, default=2.0)
     parser.add_argument("--log-every-sec", type=float, default=15.0)
+    parser.add_argument(
+        "--experts",
+        default="dummy",
+        help="comma list of experts to soak: dummy, lfcc, wavlm (real experts load from Hub)",
+    )
     args = parser.parse_args()
 
-    settings = Settings(experts=["dummy"], fusion_mode="single")
+    expert_names = [e.strip() for e in args.experts.split(",") if e.strip()]
+    settings = Settings(experts=expert_names, fusion_mode="single")
+    experts = load_experts(settings)
+    print(f"soak experts={ {k: v.model_version for k, v in experts.items()} }")
     state = ConnectionState(
         settings=settings,
-        experts={"dummy": DummyExpert(seed=7)},
+        experts=experts,
         fusion=load_fusion(ARTIFACTS_DIR / "fusion.json"),
         calibrator=load_calibrator(ARTIFACTS_DIR / "calibrator.json"),
         policy=load_policy(ARTIFACTS_DIR / "policy.json"),

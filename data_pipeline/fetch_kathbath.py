@@ -130,8 +130,8 @@ def download_and_build_manifest(
 
             for row_data in batch:
                 try:
-                    # audio is a dictionary with 'bytes' and 'path'
-                    audio_col = row_data.get("audio")
+                    # audio bytes are stored in the 'audio_filepath' column for Kathbath!
+                    audio_col = row_data.get("audio_filepath") or row_data.get("audio")
                     arr, sr   = None, 16000
                     
                     if audio_col and isinstance(audio_col, dict):
@@ -144,6 +144,8 @@ def download_and_build_manifest(
                                 import torchaudio
                                 tensor, sr = torchaudio.load(_io.BytesIO(raw_bytes))
                                 arr = tensor.numpy().T
+                                if tensor.shape[0] > 1:
+                                    arr = tensor.mean(dim=0).numpy()
                         elif raw_path and Path(raw_path).exists():
                             try:
                                 arr, sr = sf.read(raw_path, dtype="float32")
@@ -151,6 +153,8 @@ def download_and_build_manifest(
                                 import torchaudio
                                 tensor, sr = torchaudio.load(raw_path)
                                 arr = tensor.numpy().T
+                                if tensor.shape[0] > 1:
+                                    arr = tensor.mean(dim=0).numpy()
 
                     speaker_id = str(row_data.get("speaker_id", row_data.get("speaker", f"spk_{i:05d}")))
                     

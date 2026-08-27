@@ -18,7 +18,7 @@ This is **not** identity verification, **not** the dashboard (task E), and **not
 | LFCC-LCNN (Expert 3) real model wired + `state_dict` load | **done + tested** |
 | WavLM (Expert 1) real model wiring | **TODO in `experts/wavlm.py`** |
 | Fusion scaffolding (`FUSION_MODE=single` default) | done |
-| Identity-sigmoid calibrator + EMA + policy | done (calibrator not yet fitted) |
+| Identity-sigmoid calibrator + EMA + policy | done (fit script ready; run on dev set to replace stub) |
 | Fail-safe: silence / clip / decode / seq gap → `unavailable` | done + tested |
 | WAV client, soak (memory + p95 latency) | done |
 
@@ -46,7 +46,7 @@ realtime-backend/
     lfcc_model/          vendored LFCC-LCNN architecture (copy of lfcc-detector/models)
     loader.py            EXPERTS=dummy,wavlm,lfcc
   artifacts/             fusion.json, calibrator.json, policy.json
-  scripts/               wav_client.py, soak_test.py, inspect_checkpoint.py
+  scripts/               wav_client.py, soak_test.py, inspect_checkpoint.py, fit_calibrator.py
   tests/
 ```
 
@@ -79,6 +79,30 @@ Soak (in-process DummyExpert, RSS + p95 latency vs hop):
 python scripts/soak_test.py --minutes 2
 python scripts/soak_test.py --minutes 10
 ```
+
+## Fitting the calibrator
+
+The shipped `artifacts/calibrator.json` is an **identity sigmoid** — an honest but
+unfitted `sigmoid(logit)`. To make `smoothed_probability` a real probability,
+fit Platt `a,b` on a held-out dev split (labelled `bonafide`/`spoof`):
+
+```bash
+# prove the fitting math with no audio/model (synthetic, numpy only):
+python scripts/fit_calibrator.py --self-test
+
+# real fit against Task B's dev manifest (needs soundfile + the dev audio):
+pip install soundfile
+python scripts/fit_calibrator.py \
+    --manifest ../data_pipeline/manifests/asvspoof19_dev.csv \
+    --split dev --expert lfcc --out artifacts/calibrator.json
+```
+
+It reuses the backend's own resampler and the real expert adapter, so the logits
+it fits on come from the same code path that runs live. It prints pre/post ECE,
+Brier, log-loss, and dev EER, then writes a versioned `kind: "platt"` artifact.
+Re-tune `artifacts/policy.json` bands afterward, and **refit** if the expert or
+`FUSION_MODE=fused` output changes (the calibrator must see the same logit the
+policy does).
 
 ## WebSocket protocol
 

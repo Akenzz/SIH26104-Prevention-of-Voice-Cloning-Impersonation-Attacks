@@ -98,7 +98,7 @@ def download_and_build_manifest(audio_root: Path) -> Path:
             
     # If no metadata CSV, we'll try to find parquets that might have metadata
     parquet_files = list(snapshot_path.rglob("*.parquet"))
-    if not meta_df and parquet_files:
+    if meta_df is None and parquet_files:
         print(f"      Reading metadata from {len(parquet_files)} parquet files...")
         try:
             dfs = [pd.read_parquet(p) for p in parquet_files]
