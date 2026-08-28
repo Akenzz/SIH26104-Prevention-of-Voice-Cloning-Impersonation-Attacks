@@ -132,6 +132,81 @@ policy does).
 > honest failure mode, not a fitted one. Do not fit the calibrator on a corpus
 > the model does not actually separate.
 
+## Available Endpoints (for Postman/Testing)
+
+The backend exposes the following endpoints on `http://127.0.0.1:8000` (or your configured host/port).
+
+### 1. Health Check
+* **URL**: `http://127.0.0.1:8000/health`
+* **Method**: `GET`
+* **Description**: Returns the current status of the backend, which experts are loaded, configuration parameters, and versions of the policy, calibrator, and fusion modules.
+* **Example Response**:
+  ```json
+  {
+    "status": "ok",
+    "experts": ["wavlm"],
+    "fusion_mode": "single",
+    "window_sec": 4.0,
+    "hop_sec": 0.5,
+    "target_sample_rate": 16000,
+    "threshold_version": "policy-v0",
+    "calibrator_version": "platt-lfcc-asvspoof19dev-v1",
+    "fusion_version": "fusion-identity-v0"
+  }
+  ```
+
+### 2. Single File Prediction (REST)
+* **URL**: `http://127.0.0.1:8000/predict-file`
+* **Method**: `POST`
+* **Body**: `multipart/form-data` with a single field named `file` containing the audio file (e.g., .wav, .flac, .mp3).
+* **Description**: A convenience endpoint for testing individual files in Postman. It accepts an audio file, resamples it to 16kHz mono, and processes the *entire* file using the exact same overlapping-window and EMA smoothing logic as the streaming path. Short files are padded to a minimum of one 4.0-second window.
+* **Example Response**:
+  ```json
+  {
+    "summary": {
+      "overall_risk_state": "low",
+      "final_smoothed_probability": 0.00958,
+      "max_probability": 0.10755,
+      "max_probability_window_index": 4
+    },
+    "windows": [
+      {
+        "window_index": 1,
+        "start_time_sec": 0.0,
+        "risk_state": "collecting",
+        "calibrated_probability": 0.00004,
+        "raw_per_expert_scores": {
+          "wavlm": -7.199,
+          "lfcc": -8.145
+        }
+      },
+      {
+        "window_index": 2,
+        "start_time_sec": 0.5,
+        "risk_state": "low",
+        "calibrated_probability": 0.00004,
+        "raw_per_expert_scores": {
+          "wavlm": -7.261,
+          "lfcc": -8.201
+        }
+      }
+    ],
+    "model_version": {
+      "wavlm": "wavlm-base-plus-ep4",
+      "lfcc": "best_lfcc_lcnn"
+    },
+    "calibrator_version": "platt-lfcc-asvspoof19dev-v1",
+    "threshold_version": "policy-v0",
+    "fusion_version": "fusion-identity-v0",
+    "audio_quality": null
+  }
+  ```
+
+### 3. Audio Streaming (WebSocket)
+* **URL**: `ws://127.0.0.1:8000/ws`
+* **Method**: WebSocket
+* **Description**: The primary endpoint for real-time audio streaming. Postman supports WebSocket connections. You can connect to this endpoint, send a JSON `start` message, and then send binary PCM frames or JSON `frame` messages. The server will stream back JSON `score` messages. (See "WebSocket protocol" below for exact message formats).
+
 ## WebSocket protocol
 
 1. Client connects to `/ws`.

@@ -215,6 +215,63 @@ class ConnectionState:
         self.session.next_client_seq = client_seq + 1
         return False
 
+def process_single_window(
+    window: np.ndarray,
+    settings: Settings,
+    experts: dict[str, Expert],
+    fusion: FusionConfig,
+    calibrator: Calibrator,
+    policy: PolicyConfig,
+    windows_scored: int,
+    smoothed_probability: float | None = None, # If None, will use raw prob
+    dropped_frames: bool = False,
+) -> tuple[str, str, str | None, dict[str, Score], float | None, float | None, QualityResult]:
+    """Core logic to assess, score, fuse, calibrate, and decide on a single window."""
+    quality = assess_window(
+        window,
+        silence_rms=settings.silence_rms,
+        clip_abs=settings.clip_abs,
+        clip_fraction=settings.clip_fraction,
+    )
+    if dropped_frames:
+        quality = QualityResult(False, "dropped_or_reordered")
+
+    if not quality.ok:
+        state, action, flag = decide(
+            quality_ok=False,
+            quality_reason=quality.reason,
+            windows_scored=windows_scored,
+            smoothed_probability=smoothed_probability,
+            config=policy,
+        )
+        return state, action, flag, {}, None, None, quality
+
+    scores: dict[str, Score] = {}
+    for name, expert in experts.items():
+        scores[name] = expert.score(window)
+
+    fused, _used = fuse_logits(
+        scores,
+        fusion,
+        mode=settings.fusion_mode,
+        single_expert=settings.single_expert,
+    )
+    probability = calibrator.probability(fused)
+    
+    # For single-shot (no smoothing), use the raw probability
+    if smoothed_probability is None:
+        smoothed_probability = probability
+
+    state, action, flag = decide(
+        quality_ok=True,
+        quality_reason=None,
+        windows_scored=windows_scored,
+        smoothed_probability=smoothed_probability,
+        config=policy,
+    )
+    return state, action, flag, scores, fused, probability, quality
+
+
     def _score_window(
         self,
         window: np.ndarray,
@@ -222,32 +279,40 @@ class ConnectionState:
         *,
         dropped_frames: bool,
     ) -> dict[str, Any]:
-        quality = assess_window(
-            window,
-            silence_rms=self.settings.silence_rms,
-            clip_abs=self.settings.clip_abs,
-            clip_fraction=self.settings.clip_fraction,
+        
+        # First we need the raw probability to update EMA. 
+        # But we need fusion to get the probability.
+        # We can run the core sequence, but we want to pass the updated EMA back to `decide`.
+        # Actually, `process_single_window` handles `decide`. So we run it once, 
+        # get the raw probability, update EMA, and if quality is ok, we'll want `decide` 
+        # with the EMA.
+        
+        # We can just do quality assessment here, or extract the fusion math.
+        # It's cleaner to let `process_single_window` do everything, but skip its `decide` 
+        # and do it here if we want EMA.
+        # Or modify `process_single_window` to accept a callback for smoothing?
+        # Let's simplify: `process_single_window` returns all intermediate values.
+        
+        state, action, flag, scores, fused, probability, quality = process_single_window(
+            window=window,
+            settings=self.settings,
+            experts=self.experts,
+            fusion=self.fusion,
+            calibrator=self.calibrator,
+            policy=self.policy,
+            windows_scored=self.windows_scored + 1,
+            smoothed_probability=None, # pass None first, we'll re-decide if ok
+            dropped_frames=dropped_frames
         )
-        if dropped_frames:
-            quality = QualityResult(False, "dropped_or_reordered")
+        
         if not quality.ok:
             return self._unavailable(
                 quality, t0, scores={}, fused=None, window_index=self.windows_scored
             )
 
-        scores: dict[str, Score] = {}
-        for name, expert in self.experts.items():
-            scores[name] = expert.score(window)
-
-        fused, _used = fuse_logits(
-            scores,
-            self.fusion,
-            mode=self.settings.fusion_mode,
-            single_expert=self.settings.single_expert,
-        )
-        probability = self.calibrator.probability(fused)
         smoothed = self.ema.update(probability)
         self.windows_scored += 1
+        
         state, action, flag = decide(
             quality_ok=True,
             quality_reason=None,
@@ -255,6 +320,7 @@ class ConnectionState:
             smoothed_probability=smoothed,
             config=self.policy,
         )
+        
         return self._emit(
             state=state,
             action=action,
