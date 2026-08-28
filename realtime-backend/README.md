@@ -16,13 +16,13 @@ This is **not** identity verification, **not** the dashboard (task E), and **not
 | DummyExpert so the full path runs without Hub models | done |
 | Hub download + cache for WavLM and LFCC-LCNN | done (load on demand) |
 | LFCC-LCNN (Expert 3) real model wired + `state_dict` load | **done + tested** |
-| WavLM (Expert 1) real model wiring | **TODO in `experts/wavlm.py`** |
+| WavLM (Expert 1) real model wiring | **done + tested** |
 | Fusion scaffolding (`FUSION_MODE=single` default) | done |
 | Platt calibrator fitted on ASVspoof19 dev (in-domain) + EMA + policy | **done + tested** |
 | Fail-safe: silence / clip / decode / seq gap → `unavailable` | done + tested |
 | WAV client, soak (memory + p95 latency) | done |
 
-Default `EXPERTS=dummy`. **`EXPERTS=lfcc` now runs the real LFCC-LCNN detector** — it downloads `best_lfcc_lcnn.pth`, loads it into the vendored architecture (`experts/lfcc_model/`), and emits real spoof logits with a 128-dim embedding. WavLM (`experts/wavlm.py`) is still stubbed: requesting `wavlm` downloads the file, `torch.load`s it, then raises `NotImplementedError` with the checkpoint keys printed. The calibrator is a **Platt fit on the ASVspoof2019 LA dev split** (`kind: "platt"`, `a=1.32`, `b=-0.52`), so `smoothed_probability` is a real calibrated probability of the LFCC logit **on in-domain audio** — see the cross-corpus caveat below.
+Default `EXPERTS=dummy`. **`EXPERTS=wavlm` now runs the real WavLM detector** — it loads `expert1/checkpoints/best_model.pt` (produced by `expert1/train.py`) directly from the repo, or falls back to downloading from `Akenzz/Expert-1` on the Hub. The adapter imports `WavLMClassifier` from the `expert1` package, loads the `model_state_dict` with `strict=True`, and runs inference with fp16 autocast for ~2× GPU throughput. The 768-dim mean-pooled embedding and a single spoof logit are returned on every window. **`EXPERTS=lfcc`** runs the LFCC-LCNN detector (see existing docs). The calibrator is a **Platt fit on ASVspoof2019 LA dev** — see the cross-corpus caveat below.
 
 ## Layout
 
@@ -67,10 +67,20 @@ python scripts/wav_client.py --url ws://127.0.0.1:8000/ws
 python scripts/wav_client.py --wav path/to/file.wav
 ```
 
-Unit + fail-safe tests (no server required):
+Unit + fail-safe + WavLM smoke tests (no server required):
 
 ```bash
-pytest
+cd realtime-backend
+pytest                          # all fast tests (slow EER test excluded)
+pytest tests/test_wavlm_expert.py -v   # WavLM-specific tests
+```
+
+**WavLM EER benchmark** against 5 000-sample balanced subset of ASVspoof 2019 LA test:
+
+```bash
+# Requires: expert1/data/asvspoof_manifest.csv + expert1/checkpoints/best_model.pt
+cd realtime-backend
+pytest tests/test_wavlm_expert.py -v -m slow -s
 ```
 
 Soak (in-process DummyExpert, RSS + p95 latency vs hop):
@@ -226,11 +236,31 @@ succeeds without the trainer package on the path (the config is discarded — on
 `model_state_dict` is used). If the trainer changes the architecture, re-vendor
 those two files and confirm `load_state_dict` still matches.
 
-**WavLM (Expert 1) is still a stub.** To wire it, only touch `experts/wavlm.py`:
+**WavLM (Expert 1) is wired and tested.**
 
-1. Fill `_wire_model()` (import class, `load_state_dict`, `.eval()`).
-2. Fill `score()` so it returns `{logit, embedding, model_version}`. Higher logit = more spoof.
-3. Set `EXPERTS=wavlm` (or `wavlm,lfcc` with `FUSION_MODE` still `single` until eval says otherwise).
+`experts/wavlm.py` imports `WavLMClassifier` from the sibling `expert1/` package, loads `model_state_dict` with `strict=True`, runs with fp16 autocast on CUDA, and returns `{logit, embedding (768-dim), model_version}` on every window. Checkpoint resolution:
+
+1. **Local** — `expert1/checkpoints/best_model.pt` (produced by `expert1/train.py`)
+2. **Hub fallback** — `Akenzz/Expert-1 / best_model.pt` (for teammates without a local checkpoint)
+
+Run it with:
+
+```bash
+# From repo root — train first (one-time, ~1 hr for 10 epochs on RTX 2060):
+python -m expert1.train \
+    --manifest expert1/data/asvspoof_manifest.csv \
+    --epochs 10 --batch-size 32 --dev-batches 200
+
+# Then start the backend with WavLM:
+cd realtime-backend
+EXPERTS=wavlm DEVICE=cuda uvicorn server:app --host 0.0.0.0 --port 8000
+
+# Smoke tests (fast, no server needed):
+pytest tests/test_wavlm_expert.py -v
+
+# EER benchmark (5 000-sample balanced subset, ~5 min):
+pytest tests/test_wavlm_expert.py -v -m slow -s
+```
 
 ## Fail-safe (required)
 
