@@ -118,11 +118,9 @@ class AudioDataset(torch.utils.data.Dataset):
             try:
                 audio, sr = torchaudio.load(audio_path)
             except Exception as e_ta:
-                raise RuntimeError(
-                    f"Failed to load {audio_path} with both soundfile and torchaudio.\n"
-                    f"  soundfile error: {e_sf}\n"
-                    f"  torchaudio error: {e_ta}"
-                )
+                print(f"[WARN] Failed to load {audio_path}. Returning silent audio. Error: {e_ta}")
+                audio = torch.zeros(1, self.window_samples, dtype=torch.float32)
+                sr = self.sample_rate
 
         # Resample if needed
         if sr != self.sample_rate:

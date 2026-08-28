@@ -5,6 +5,7 @@ Training script for LFCC-LCNN Voice Cloning / Synthetic Speech Detector.
 import os
 import sys
 import argparse
+import random
 import time
 from pathlib import Path
 import numpy as np
@@ -19,6 +20,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from data.dataset import AudioDataset, collate_fn
 from models.lfcc_lcnn import LFCCLCNNWithFeatureExtraction
 from training.config import TrainingConfig
+
+
+def set_seed(seed: int):
+    """Make a run reproducible across python/numpy/torch RNGs."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def compute_eer(bonafide_scores: np.ndarray, spoof_scores: np.ndarray):
@@ -138,6 +148,10 @@ def main():
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--log-every", type=int, default=50)
+    parser.add_argument("--num-workers", type=int, default=4,
+                        help="DataLoader worker processes (0 = serial, starves the GPU on Windows)")
+    parser.add_argument("--checkpoint-name", type=str, default="best_lfcc_lcnn.pth")
     parser.add_argument("--log-every", type=int, default=50,
                         help="Print batch loss/acc every N batches (default: 50)")
     parser.add_argument("--checkpoint-name", type=str, default="best_lfcc_lcnn.pth",
@@ -152,6 +166,12 @@ def main():
         batch_size=args.batch_size,
         learning_rate=args.lr
     )
+    log_every       = args.log_every
+    checkpoint_name = args.checkpoint_name
+    num_workers     = args.num_workers
+
+    set_seed(config.seed)
+    print(f"[INFO] Seed set to {config.seed}")
     log_every       = args.log_every
     checkpoint_name = args.checkpoint_name
 
@@ -169,14 +189,22 @@ def main():
     train_dataset = AudioDataset(config.train_manifest, split='train', window_sec=config.window_sec)
     dev_dataset = AudioDataset(config.dev_manifest, split='dev', window_sec=config.window_sec)
 
-    # num_workers=0 is required on Windows to avoid DataLoader multiprocessing issues
+    # On Windows the main-guard (if __name__=='__main__') lets num_workers>0 spawn
+    # cleanly. num_workers=0 decodes flac serially and starves the GPU (~1 batch/s).
+    loader_kwargs = dict(
+        collate_fn=collate_fn,
+        num_workers=num_workers,
+        pin_memory=(device.type == 'cuda'),
+        persistent_workers=(num_workers > 0),
+    )
+    if num_workers > 0:
+        loader_kwargs["prefetch_factor"] = 4
+
     train_loader = DataLoader(
-        train_dataset, batch_size=config.batch_size, shuffle=True,
-        collate_fn=collate_fn, num_workers=0, pin_memory=(device.type == 'cuda')
+        train_dataset, batch_size=config.batch_size, shuffle=True, **loader_kwargs
     )
     dev_loader = DataLoader(
-        dev_dataset, batch_size=config.batch_size, shuffle=False,
-        collate_fn=collate_fn, num_workers=0, pin_memory=(device.type == 'cuda')
+        dev_dataset, batch_size=config.batch_size, shuffle=False, **loader_kwargs
     )
 
     # Initialize model
@@ -188,9 +216,30 @@ def main():
         dropout=config.dropout
     ).to(device)
 
-    criterion = nn.BCEWithLogitsLoss()
+    # Class imbalance: v2_train is ~3:1 bonafide:spoof. Upweight the positive
+    # (spoof) class so the model isn't rewarded for predicting "real" by default.
+    label_counts = train_dataset.df['label'].value_counts()
+    n_bonafide = int(label_counts.get('bonafide', 0))
+    n_spoof    = int(label_counts.get('spoof', 0))
+    if n_spoof > 0:
+        pos_weight_val = n_bonafide / n_spoof
+        pos_weight = torch.tensor([pos_weight_val], device=device)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        print(f"[INFO] pos_weight = {pos_weight_val:.4f}  (bonafide={n_bonafide:,} / spoof={n_spoof:,})")
+    else:
+        criterion = nn.BCEWithLogitsLoss()
+        print("[WARN] No spoof samples found in train split; using unweighted BCE.")
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
 
+    print(f"\n--- Starting Training ---")
+    print(f"  Train rows  : {len(train_dataset):,}")
+    print(f"  Dev rows    : {len(dev_dataset):,}")
+    print(f"  Epochs      : {config.epochs}")
+    print(f"  Batch size  : {config.batch_size}")
+    print(f"  LR          : {config.learning_rate}")
+    print(f"  Log every   : {log_every} batches")
+    print(f"  Checkpoint  : {Path(config.output_dir) / checkpoint_name}")
+    print(f"{'-'*60}")
     print(f"\n--- Starting Training ---")
     print(f"  Train rows  : {len(train_dataset):,}")
     print(f"  Dev rows    : {len(dev_dataset):,}")
@@ -211,8 +260,21 @@ def main():
         dev_loss, dev_eer, dev_thresh = evaluate(
             model, dev_loader, criterion, device, log_every=log_every * 2
         )
+        train_loss, train_acc = train_one_epoch(
+            model, train_loader, criterion, optimizer, device,
+            config.grad_clip, log_every=log_every
+        )
+        dev_loss, dev_eer, dev_thresh = evaluate(
+            model, dev_loader, criterion, device, log_every=log_every * 2
+        )
         elapsed = time.time() - t0
 
+        print(
+            f"Epoch {epoch:02d}/{config.epochs:02d} [{elapsed:.1f}s]  "
+            f"Train loss={train_loss:.4f}  acc={train_acc*100:.1f}%  "
+            f"| Dev loss={dev_loss:.4f}  EER={dev_eer*100:.2f}%  (thresh={dev_thresh:.4f})",
+            flush=True
+        )
         print(
             f"Epoch {epoch:02d}/{config.epochs:02d} [{elapsed:.1f}s]  "
             f"Train loss={train_loss:.4f}  acc={train_acc*100:.1f}%  "
@@ -223,6 +285,7 @@ def main():
         if dev_eer < best_eer:
             best_eer = dev_eer
             checkpoint_path = Path(config.output_dir) / checkpoint_name
+            checkpoint_path = Path(config.output_dir) / checkpoint_name
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
@@ -230,6 +293,7 @@ def main():
                 'best_eer': best_eer,
                 'config': config
             }, checkpoint_path)
+            print(f"  ★ New best! EER={best_eer*100:.4f}%  → saved {checkpoint_path}", flush=True)
             print(f"  ★ New best! EER={best_eer*100:.4f}%  → saved {checkpoint_path}", flush=True)
 
     print(f"\nTraining Complete! Best Dev EER: {best_eer*100:.2f}%")
