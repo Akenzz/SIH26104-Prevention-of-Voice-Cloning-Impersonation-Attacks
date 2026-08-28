@@ -1,122 +1,72 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import "./styles/app.css";
+import { useMonitor } from "@/lib/useMonitor.js";
+import { Panel } from "@/components/ui/primitives.jsx";
+import StatusRail from "@/components/layout/StatusRail.jsx";
+import Disclaimer from "@/components/layout/Disclaimer.jsx";
+import SourcePanel from "@/components/panels/SourcePanel.jsx";
+import SignalStrip from "@/components/viz/SignalStrip.jsx";
+import VerdictPanel from "@/components/panels/VerdictPanel.jsx";
+import TimelineChart from "@/components/viz/TimelineChart.jsx";
+import ReasoningLog from "@/components/panels/ReasoningLog.jsx";
+import ExpertPanel from "@/components/panels/ExpertPanel.jsx";
 
-function App() {
-  const [count, setCount] = useState(0)
+export default function App() {
+  const m = useMonitor();
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="app">
+      <StatusRail current={m.current} source={m.source} running={m.status === "running"} />
+      <Disclaimer />
 
-      <div className="ticks"></div>
+      <main className="console">
+        <div className="col col-left">
+          <Panel eyebrow="Control deck" title="Signal source">
+            <SourcePanel
+              source={m.source} setSource={m.setSource}
+              scenario={m.scenario} setScenario={m.setScenario}
+              inputKind={m.inputKind} setInputKind={m.setInputKind}
+              backendBase={m.backendBase} setBackendBase={m.setBackendBase}
+              status={m.status} running={m.running} error={m.error} elapsedSec={m.elapsedSec}
+              health={m.health} healthError={m.healthError} refreshHealth={m.refreshHealth}
+              onStart={m.start} onStop={m.stop}
+            />
+          </Panel>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+          <Panel eyebrow="Input" title="Live waveform">
+            <SignalStrip readWaveform={m.readWaveform} running={m.status === "running"} state={m.current?.risk_state} />
+          </Panel>
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+        <div className="col col-center">
+          <VerdictPanel current={m.current} status={m.status} />
+
+          <Panel eyebrow="Smoothed spoof probability" title="Risk timeline">
+            <div className="timeline-box">
+              <TimelineChart series={m.series} />
+            </div>
+          </Panel>
+        </div>
+
+        <div className="col col-right">
+          <Panel
+            eyebrow="Task F · grounded narration"
+            title="Live reasoning"
+          >
+            <ReasoningLog reasoning={m.reasoning} />
+          </Panel>
+
+          <Panel eyebrow="Detector" title="Experts & integrity">
+            <ExpertPanel current={m.current} stats={m.stats} />
+          </Panel>
+        </div>
+      </main>
+
+      <footer className="foot">
+        <span className="mono">SIH26104 · Prevention of Voice-Cloning &amp; Impersonation Attacks</span>
+        <span className="mono foot-dim">
+          Dashboard (E) + reasoning (F) + call simulator (G) · speaks the task C WebSocket contract
+        </span>
+      </footer>
+    </div>
+  );
 }
-
-export default App
