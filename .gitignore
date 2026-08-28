@@ -84,10 +84,14 @@ data1/
 *.flac
 *.wav
 
-# Generated manifests (re-created by repath_manifest.py)
+# Generated manifests (re-created by fetch_*.py and build_v2_manifests.py)
+# Manifests are machine-specific (absolute paths) — each team member regenerates locally
 expert1/data/asvspoof_manifest.csv
 expert1/data/audio/
 data_pipeline/manifests/
+# Scratch / debug scripts
+data_pipeline/test_pq.py
+data_pipeline/test_*.py
 
 # Model checkpoints
 expert1/checkpoints/

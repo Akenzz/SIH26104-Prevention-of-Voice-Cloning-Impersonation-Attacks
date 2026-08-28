@@ -6,9 +6,9 @@ manifest_dir = repo_root / "data_pipeline" / "manifests"
 
 def merge_manifests():
     train_files = [
-        manifest_dir / "asvspoof19_train.csv",
-        manifest_dir / "kathbath_train.csv",
-        manifest_dir / "mlaad_train.csv"
+        manifest_dir / "asvspoof19_train.csv",   # ~25k English spoof (ASVspoof 2019)
+        manifest_dir / "kathbath_train.csv",       # ~83k Hindi bonafide (Kathbath)
+        manifest_dir / "mlaad_train.csv",          # ~15k multilingual spoof (MLAAD-tiny)
     ]
     
     dev_files = [
@@ -20,13 +20,22 @@ def merge_manifests():
     
     # 1. Build V2 Train
     train_dfs = []
+    missing = []
     for f in train_files:
         if f.exists():
             df = pd.read_csv(f)
             train_dfs.append(df)
-            print(f"Loaded {len(df):,} rows from {f.name}")
+            print(f"  Loaded {len(df):,} rows from {f.name}")
         else:
-            print(f"[WARN] Missing train manifest: {f.name}")
+            missing.append(f.name)
+            print(f"  [WARN] Missing: {f.name}")
+    
+    if "asvspoof19_train.csv" in missing:
+        print()
+        print("  [ACTION REQUIRED] asvspoof19_train.csv not found.")
+        print("  Regenerate it with (no retraining, manifests only):")
+        print("    python data_pipeline/fetch_asvspoof2019.py --dataset-root D:\\DatasetSIH\\LA --skip-training --skip-benchmark")
+        print()
             
     if train_dfs:
         v2_train = pd.concat(train_dfs, ignore_index=True)

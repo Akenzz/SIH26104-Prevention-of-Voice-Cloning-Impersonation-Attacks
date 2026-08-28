@@ -138,6 +138,10 @@ def main():
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--log-every", type=int, default=50,
+                        help="Print batch loss/acc every N batches (default: 50)")
+    parser.add_argument("--checkpoint-name", type=str, default="best_lfcc_lcnn.pth",
+                        help="Filename to save the best checkpoint (default: best_lfcc_lcnn.pth)")
     args = parser.parse_args()
 
     config = TrainingConfig(
@@ -148,6 +152,8 @@ def main():
         batch_size=args.batch_size,
         learning_rate=args.lr
     )
+    log_every       = args.log_every
+    checkpoint_name = args.checkpoint_name
 
     if torch.cuda.is_available():
         device = torch.device('cuda')
@@ -185,20 +191,38 @@ def main():
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
 
-    print("\n--- Starting Training ---")
+    print(f"\n--- Starting Training ---")
+    print(f"  Train rows  : {len(train_dataset):,}")
+    print(f"  Dev rows    : {len(dev_dataset):,}")
+    print(f"  Epochs      : {config.epochs}")
+    print(f"  Batch size  : {config.batch_size}")
+    print(f"  LR          : {config.learning_rate}")
+    print(f"  Log every   : {log_every} batches")
+    print(f"  Checkpoint  : {Path(config.output_dir) / checkpoint_name}")
+    print(f"{'-'*60}")
     best_eer = 1.0
 
     for epoch in range(1, config.epochs + 1):
         t0 = time.time()
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device, config.grad_clip)
-        dev_loss, dev_eer, dev_thresh = evaluate(model, dev_loader, criterion, device)
+        train_loss, train_acc = train_one_epoch(
+            model, train_loader, criterion, optimizer, device,
+            config.grad_clip, log_every=log_every
+        )
+        dev_loss, dev_eer, dev_thresh = evaluate(
+            model, dev_loader, criterion, device, log_every=log_every * 2
+        )
         elapsed = time.time() - t0
 
-        print(f"Epoch {epoch:02d}/{config.epochs:02d} [{elapsed:.1f}s] - Train Loss: {train_loss:.4f}, Train Acc: {train_acc*100:.1f}% | Dev Loss: {dev_loss:.4f}, Dev EER: {dev_eer*100:.2f}% (thresh: {dev_thresh:.4f})")
+        print(
+            f"Epoch {epoch:02d}/{config.epochs:02d} [{elapsed:.1f}s]  "
+            f"Train loss={train_loss:.4f}  acc={train_acc*100:.1f}%  "
+            f"| Dev loss={dev_loss:.4f}  EER={dev_eer*100:.2f}%  (thresh={dev_thresh:.4f})",
+            flush=True
+        )
 
         if dev_eer < best_eer:
             best_eer = dev_eer
-            checkpoint_path = Path(config.output_dir) / config.checkpoint_name
+            checkpoint_path = Path(config.output_dir) / checkpoint_name
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
@@ -206,7 +230,7 @@ def main():
                 'best_eer': best_eer,
                 'config': config
             }, checkpoint_path)
-            print(f"  [OK] Saved new best checkpoint to {checkpoint_path}")
+            print(f"  ★ New best! EER={best_eer*100:.4f}%  → saved {checkpoint_path}", flush=True)
 
     print(f"\nTraining Complete! Best Dev EER: {best_eer*100:.2f}%")
 

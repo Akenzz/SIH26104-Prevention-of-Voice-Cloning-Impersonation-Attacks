@@ -1,422 +1,201 @@
 # data_pipeline — Task B: Data Pipeline, Manifest & Evaluation Harness
 
-> **Status:** ASVspoof 2019 LA complete ✅. Additional datasets (In-the-Wild, MLAAD, Kathbath) download scripts ready.
+> **Status:** ✅ V2 multi-lingual training data ready. All download scripts functional.
 >
 > This folder is the **single source of truth** every model trains and is measured against. Person A (WavLM), Person D (LFCC-LCNN), Person H (Evaluation), and Person K (AASIST) all consume the same manifests and evaluation harness from here.
 
 ---
 
-## For Person H — Running Sliced Evaluation
+## Quick Start for All Team Members
 
-Person H uses `evaluate_slices.py` to produce the results table for the pitch deck. Each condition is reported **separately, never pooled** (MD spec requirement).
-
-```bash
-# Run per-condition evaluation against the LFCC-LCNN checkpoint (works today)
-python data_pipeline/evaluate_slices.py \
-    --checkpoint  lfcc-detector/checkpoints/best_lfcc_lcnn.pth \
-    --manifests   data_pipeline/manifests/asvspoof19_eval.csv \
-    --output-dir  data_pipeline/reports/sliced_eval \
-    --model-name  LFCC-LCNN
-
-# Once more datasets are downloaded, add them:
-python data_pipeline/evaluate_slices.py \
-    --checkpoint  lfcc-detector/checkpoints/best_lfcc_lcnn.pth \
-    --manifests   data_pipeline/manifests/asvspoof19_eval.csv \
-                  data_pipeline/manifests/in_the_wild_eval_ood.csv \
-                  data_pipeline/manifests/mlaad_eval_ood.csv \
-                  data_pipeline/manifests/kathbath_eval.csv \
-    --output-dir  data_pipeline/reports/sliced_eval \
-    --model-name  LFCC-LCNN
-```
-
-**Outputs in `data_pipeline/reports/sliced_eval/`:**
-- `sliced_eval_results.json` — machine-readable full results
-- `sliced_eval_report.md` — Markdown table formatted for the pitch slide
-
-**Slices produced automatically:**
-
-| Slice | What it tests | MD spec reference |
-|-------|--------------|-------------------|
-| Per attack/generator (A07–A19) | Model vs each unseen attack system | Task H line 167 |
-| Per source dataset | Within-corpus vs cross-corpus | Task H line 165-166 |
-| Per language | One EER per language (never averaged) | Task H line 168 |
-| OOD cross-corpus (eval_ood) | In-the-Wild / held-out MLAAD | Task H line 166 |
-| Real-only safety set | False positive rate on real speech | Task H line 170 |
-
-> [!IMPORTANT]
-> **Never pool slices.** A strong average hiding a failed language is a claim you cannot defend in Q&A (MD spec). Report every named condition separately.
-
----
-
-## Dataset Download Guide
-
-Audio files go to `E:\DatasetSIH\` (external drive). Manifests (CSVs, ~MBs) stay in the repo.
-
-### Dataset Sizes at a Glance
-
-| Dataset | Size | Access | Purpose | Command |
-|---------|------|--------|---------|---------|
-| ASVspoof 2019 LA | 7 GB | ✅ Already downloaded | Primary train/eval | Already done |
-| **In-the-Wild** | **8.16 GB** | ✅ Open (HuggingFace) | OOD eval ONLY | See below |
-| **MLAAD-tiny** | **3.54 GB** | ✅ Open (HuggingFace) | Multilingual train | See below |
-| **Kathbath** (3 langs) | **~5 GB** | 🔒 Gated (HF login) | Indic bonafide | See below |
-| ASVspoof 2021 LA eval | ~8 GB | 🔒 Registration | Channel robustness | See below |
-| Kathbath (all 12 langs) | ~50 GB | 🔒 Gated | Full Indic coverage | Optional |
-| MLAAD full | 1000+ hours | 🔒 Gated | Full multilingual | Optional later |
-
-### Prerequisites
+### Step 1 — Install dependencies
 
 ```powershell
-pip install datasets soundfile huggingface_hub
+pip install datasets soundfile huggingface_hub pandas pyarrow torchaudio
 ```
 
----
-
-### 1. In-the-Wild (8.16 GB) — Open, auto-download
-
-No login needed. Saves to `E:\DatasetSIH\in_the_wild\`.
+### Step 2 — Generate manifests (run once, takes ~1 minute)
 
 ```powershell
-cd "D:\SIH\SIH26104-Prevention-of-Voice-Cloning-Impersonation-Attacks"
-python data_pipeline/fetch_in_the_wild.py
+# From repo root — regenerates all CSVs in data_pipeline/manifests/
+python data_pipeline/fetch_asvspoof2019.py --dataset-root D:\DatasetSIH\LA --skip-training --skip-benchmark
 ```
 
-> Split: `eval_ood` — **never used in training**. MD spec line 54: "cross-corpus evaluation only, never train on it."
-
----
-
-### 2. MLAAD-tiny (3.54 GB) — Open, auto-download
-
-No login needed. Saves to `E:\DatasetSIH\mlaad\`.
+### Step 3 — Download the other datasets (one-time, already done by Person D)
 
 ```powershell
-python data_pipeline/fetch_mlaad.py --use-tiny
+python data_pipeline/fetch_in_the_wild.py              # 8 GB, eval only
+python data_pipeline/fetch_mlaad.py --use-tiny         # 3.5 GB, multilingual spoof
+python data_pipeline/fetch_kathbath.py --languages hi  # Hindi bonafide speech
 ```
 
-Held-out TTS systems (VITS, YourTTS) automatically get `split=eval_ood` — becomes H's **unseen generator** test slice.
-
-For full MLAAD (gated, 1000+ hours):
-```powershell
-# 1. Accept terms at: https://huggingface.co/datasets/mueller91/MLAAD
-# 2. Login:
-huggingface-cli login
-# 3. Download:
-python data_pipeline/fetch_mlaad.py
-```
-
----
-
-### 3. Kathbath — Indic Real Speech (Gated, HF login required)
-
-Recommended first run: start with 3 languages (~5 GB) before downloading all 12 (~50 GB).
+### Step 4 — Build the V2 merged training manifest
 
 ```powershell
-# Step 1: accept terms at https://huggingface.co/datasets/ai4bharat/Kathbath
-# Step 2: login
-huggingface-cli login
-
-# Step 3: download Hindi, Tamil, Telugu first (covers major Indic languages)
-python data_pipeline/fetch_kathbath.py --languages hi ta te
-
-# Step 4: add more languages later
-python data_pipeline/fetch_kathbath.py --languages bn kn mr
+python data_pipeline/build_v2_manifests.py
 ```
 
-All labels are `bonafide` (real speech). `kathbath_eval.csv` becomes **H's real-only safety set** to measure the false positive rate on real Indic speech.
-
-Available languages: Bengali (bn), Gujarati (gu), Hindi (hi), Kannada (kn), Malayalam (ml), Marathi (mr), Odia (or), Punjabi (pa), Sanskrit (sa), Tamil (ta), Telugu (te), Urdu (ur)
+This produces:
+| File | Rows | Purpose |
+|------|------|---------|
+| `v2_train.csv` | ~123,821 | V2 model training |
+| `v2_dev.csv` | ~24,844 | V2 early stopping / dev EER |
 
 ---
 
-### 4. ASVspoof 2021 LA eval — Manual Download (Registration Required)
+## Manifest Files Reference
 
-ASVspoof 2021 requires registration at the official site. **Download only the LA eval set** (~8 GB) — you don't need the full 34 GB DF set for now.
+> Manifests are in `data_pipeline/manifests/`. They are **git-ignored** (machine-specific paths).
+> Every team member regenerates them locally by running the scripts above.
 
-**Steps:**
-1. Register at: **https://www.asvspoof.org/index2021.html**
-2. Download only: `ASVspoof2021_LA_eval.tar.gz` (~8 GB)
-3. Extract to: `E:\DatasetSIH\asvspoof2021\LA\`
-4. Run the converter (to be built):
-   ```powershell
-   python data_pipeline/fetch_asvspoof2021.py --dataset-root E:\DatasetSIH\asvspoof2021
-   ```
-
-> **Alternative HuggingFace mirror** (no registration, already transcoded):
-> `SpeechAntiSpoofingBenchmarks/ASVspoof2021_LA` — check if still available at time of use.
-
----
-
-## Recommended Download Order
-
-```
-TODAY:
-  1. python data_pipeline/fetch_in_the_wild.py    # 8.16 GB, no login, ~30 min
-  2. python data_pipeline/fetch_mlaad.py --use-tiny  # 3.54 GB, no login, ~15 min
-
-AFTER HF LOGIN:
-  3. python data_pipeline/fetch_kathbath.py --languages hi ta te  # ~5 GB
-
-WHEN ASVSPOOF 2021 IS REGISTERED:
-  4. python data_pipeline/fetch_asvspoof2021.py   # ~8 GB, manual step required
-```
+| Manifest | Rows | Split | Dataset | Use |
+|----------|------|-------|---------|-----|
+| `asvspoof19_train.csv` | 25,380 | train | ASVspoof 2019 LA | English spoof training |
+| `asvspoof19_dev.csv` | 24,844 | dev | ASVspoof 2019 LA | Dev / early stopping |
+| `asvspoof19_eval.csv` | 71,237 | eval | ASVspoof 2019 LA | English eval benchmark |
+| `kathbath_train.csv` | 83,151 | train | Kathbath Hindi | Indic bonafide training |
+| `kathbath_eval.csv` | 3,151 | eval | Kathbath Hindi | **H's Indic safety set** (FPR) |
+| `mlaad_train.csv` | 15,290 | train | MLAAD-tiny | Multilingual spoof training |
+| `in_the_wild_eval_ood.csv` | 31,779 | eval_ood | In-the-Wild | Cross-corpus OOD eval |
+| **`v2_train.csv`** | **123,821** | train | ASVspoof19+Kathbath+MLAAD | **V2 model training** |
+| **`v2_dev.csv`** | **24,844** | dev | ASVspoof19 | **V2 dev / early stopping** |
 
 ---
 
-## Quick Start for Person A (WavLM)
+## For Person A (WavLM) — Using V2 Data
 
 ```python
-# 1. Load the training dataset
 from data_pipeline.loader import ManifestAudioDataset
 from data_pipeline.augmentation import TrainingAugmentationPipeline
 from torch.utils.data import DataLoader
 
-aug = TrainingAugmentationPipeline(apply_noise=True)  # optional
-
+# Load V2 training data (multilingual: English + Hindi)
 train_ds = ManifestAudioDataset(
-    manifest_path="data_pipeline/manifests/asvspoof19_train.csv",
+    manifest_path="data_pipeline/manifests/v2_train.csv",
     split="train",
     window_sec=4.0,
     sample_rate=16000,
-    augmentation_pipeline=aug,   # None for clean baseline
+    augmentation_pipeline=TrainingAugmentationPipeline(apply_noise=True),
 )
 dev_ds = ManifestAudioDataset(
-    manifest_path="data_pipeline/manifests/asvspoof19_dev.csv",
+    manifest_path="data_pipeline/manifests/v2_dev.csv",
     split="dev",
 )
 
 train_loader = DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=0)
 dev_loader   = DataLoader(dev_ds,   batch_size=32, shuffle=False, num_workers=0)
 
-# 2. Each batch returns (audio, label, metadata)
-for audio, label, meta in train_loader:
-    # audio : Tensor (batch, 64000)  — 4s @ 16kHz, float32
-    # label : Tensor (batch,)  long  — 0=bonafide, 1=spoof
-    # meta  : list of dicts with speaker_id, utterance_id, generator_id, ...
-    pass
-
-# 3. Benchmark your checkpoint
-# python data_pipeline/run_experiment.py \
-#     --checkpoint path/to/your/wavlm_checkpoint.pth \
-#     --manifest   data_pipeline/manifests/asvspoof19_eval.csv \
-#     --output-report data_pipeline/reports/wavlm_asvspoof19_eval \
-#     --split eval
+# Each batch: (audio, label, metadata)
+# audio : Tensor (batch, 64000) — 4s @ 16kHz float32
+# label : Tensor (batch,) long  — 0=bonafide, 1=spoof
 ```
+
+> **Note on class balance in V2:** V2 has more bonafide rows (83k Hindi + 2.5k English = ~86k)
+> vs spoof (23k English + 15k MLAAD = ~38k). This is intentional — it reduces false positives on
+> real Indic speech. Use `BCEWithLogitsLoss` with `pos_weight` if needed.
 
 ---
 
-## Folder Structure
+## For Person H — Running Sliced Evaluation
 
+Person H uses `evaluate_slices.py` to produce the per-condition results table.
+**Never pool slices** — MD spec requirement.
+
+### V1 Model (baseline, already run)
+```powershell
+python data_pipeline/evaluate_slices.py `
+    --checkpoint  lfcc-detector/checkpoints/best_lfcc_lcnn.pth `
+    --manifests   data_pipeline/manifests/kathbath_eval.csv `
+                  data_pipeline/manifests/in_the_wild_eval_ood.csv `
+    --output-dir  data_pipeline/reports/sliced_eval_v1 `
+    --model-name  "LFCC-LCNN (V1)"
 ```
-data_pipeline/
-├── manifests/                     ← Generated manifest CSVs (locked, do not edit)
-│   ├── asvspoof19_train.csv       — 25,380 samples (2,580 bonafide / 22,800 spoof)
-│   ├── asvspoof19_dev.csv         — 24,844 samples (2,548 bonafide / 22,296 spoof)
-│   ├── asvspoof19_eval.csv        — 71,237 samples (7,355 bonafide / 63,882 spoof)
-│   └── asvspoof19_combined.csv    — All splits merged (for leakage audit only)
-├── reports/                       ← Benchmark reports written here by run_experiment.py
-├── schema.py                      ← 12-column manifest contract + validate_schema()
-├── loader.py                      ← ManifestAudioDataset (PyTorch Dataset)
-├── augmentation.py                ← TrainingAugmentationPipeline (codec/noise/RIR)
-├── convert_asvspoof.py            ← Protocol → manifest CSV converter
-├── check_leakage.py               ← LeakageChecker assertion script
-├── run_experiment.py              ← Evaluation harness (EER / ROC-AUC / PR-AUC)
-└── fetch_asvspoof2019.py          ← Full pipeline runner (manifests + audit + train + bench)
+
+### V2 Model (run after training completes)
+```powershell
+python data_pipeline/evaluate_slices.py `
+    --checkpoint  lfcc-detector/checkpoints/best_lfcc_lcnn_v2.pth `
+    --manifests   data_pipeline/manifests/asvspoof19_eval.csv `
+                  data_pipeline/manifests/kathbath_eval.csv `
+                  data_pipeline/manifests/in_the_wild_eval_ood.csv `
+    --output-dir  data_pipeline/reports/sliced_eval_v2 `
+    --model-name  "LFCC-LCNN (V2)"
 ```
+
+**Key findings from V1 sliced eval:**
+
+| Condition | EER / FP Rate | Status |
+|-----------|--------------|--------|
+| English (In-the-Wild) | FP = 5.2% | ✅ Acceptable |
+| Hindi bonafide (Kathbath) | **FP = 45.0%** | ❌ V1 bias — fixed by V2 training |
+| Full OOD pooled | EER = 37.35% | ❌ V1 fails cross-corpus |
 
 ---
 
-## Manifest Schema (12 columns)
+## For Person D (LFCC-LCNN) — Training V2
 
-Every manifest CSV — regardless of dataset or model — uses exactly these columns:
+```powershell
+cd lfcc-detector
+python training/train.py `
+    --train-manifest  ../data_pipeline/manifests/v2_train.csv `
+    --dev-manifest    ../data_pipeline/manifests/v2_dev.csv `
+    --output-dir      checkpoints `
+    --epochs          20 `
+    --batch-size      32 `
+    --lr              1e-4 `
+    --log-every       100 `
+    --checkpoint-name best_lfcc_lcnn_v2.pth `
+    2>&1 | Tee-Object -FilePath ../data_pipeline/reports/v2_training_log.txt
+```
 
-| Column | Type | Values / Notes |
-|--------|------|----------------|
-| `path` | str | Absolute path to audio file (.flac or .wav) |
-| `label` | str | **`bonafide`** or **`spoof`** — nothing else |
-| `split` | str | `train`, `dev`, or `eval` |
-| `source_dataset` | str | e.g. `ASVspoof2019_LA` |
-| `speaker_id` | str | e.g. `LA_0079` |
-| `utterance_id` | str | e.g. `LA_T_1000137` |
-| `generator_id` | str | Attack system ID (e.g. `A07`) or `none` for bonafide |
-| `language` | str | ISO 639-1 code (e.g. `en`) |
-| `codec` | str | Source codec (e.g. `pcm_16k`) |
+V1 checkpoint (`best_lfcc_lcnn.pth`) is preserved. V2 saves to `best_lfcc_lcnn_v2.pth`.
+
+---
+
+## Dataset Download Guide
+
+Audio files go to `E:\DatasetSIH\` or `D:\DatasetSIH\`. Manifests (CSVs, ~MBs) stay local.
+
+| Dataset | Size | Access | Purpose |
+|---------|------|--------|---------|
+| ASVspoof 2019 LA | 7 GB | ✅ Already at `D:\DatasetSIH\LA` | Primary English train/eval |
+| In-the-Wild | 8.16 GB | ✅ Open (HuggingFace) | OOD eval ONLY — never train |
+| MLAAD-tiny | 3.54 GB | ✅ Open (HuggingFace) | Multilingual spoof train |
+| Kathbath (Hindi) | ~5 GB | 🔒 Gated (HF login) | Indic bonafide train + safety set |
+| ASVspoof 2021 LA eval | ~8 GB | Downloaded to `E:\DatasetSIH\` | Channel robustness eval (future) |
+
+---
+
+## Manifest Schema (12 columns — unchanged)
+
+| Column | Type | Values |
+|--------|------|--------|
+| `path` | str | Absolute path to `.flac` or `.wav` |
+| `label` | str | `bonafide` or `spoof` |
+| `split` | str | `train`, `dev`, `eval`, or `eval_ood` |
+| `source_dataset` | str | e.g. `ASVspoof2019_LA`, `Kathbath`, `MLAAD-tiny` |
+| `speaker_id` | str | Speaker identifier |
+| `utterance_id` | str | Utterance identifier |
+| `generator_id` | str | TTS system ID or `none` for bonafide |
+| `language` | str | ISO 639-1 code (`en`, `hi`, `de`, …) |
+| `codec` | str | Source codec (`pcm_16k`, `flac`, …) |
 | `duration_s` | float | Duration in seconds |
-| `license` | str | Dataset license identifier |
-| `consent` | str | `yes` / `no` — speaker consent status |
+| `license` | str | Dataset license |
+| `consent` | str | `yes` / `no` |
 
-> **Rule:** `label` is always exactly `bonafide` or `spoof`. Binary, no implicit encoding.
-
-Validated at load time by `schema.py`:
+Validated at load time:
 ```python
 from data_pipeline.schema import validate_schema
-errors = validate_schema(df)   # returns [] if valid, list of error strings otherwise
+errors = validate_schema(df)  # [] if valid
 ```
 
 ---
 
-## Audio Contract
-
-All audio loaded through `ManifestAudioDataset` is delivered as:
-
-- **Sample rate:** 16,000 Hz (resampled automatically if source differs)
-- **Channels:** Mono (stereo averaged to mono)
-- **Window length:** 4.0 seconds = 64,000 samples (padded with zeros or centre-cropped)
-- **Dtype:** `torch.float32`, range approximately [-1, 1]
-- **Training windows:** cropped at a random start offset (data augmentation)
-- **Dev/eval windows:** cropped at centre (deterministic, reproducible)
-
----
-
-## Score / Model Contract
-
-Every expert model **must** implement this function signature so Task C (backend) can call any model interchangeably:
-
-```python
-def score(audio_window: np.ndarray) -> dict:
-    """
-    Args:
-        audio_window: float32 numpy array, shape (64000,), 16kHz mono.
-
-    Returns:
-        {
-            'logit':         float  — raw pre-sigmoid score, higher = more spoof,
-            'embedding':     np.ndarray or None — (embedding_dim,) vector,
-            'model_version': str    — e.g. 'wavlm-base-plus-v1',
-        }
-    """
-```
-
-> **Important:** Higher logit = more evidence of spoof. Document this direction explicitly so nobody flips it in Task C.  
-> Do **not** call a raw logit a probability. Apply calibration (Platt scaling or isotonic regression on dev data) before exposing as probability.
-
----
-
-## Evaluation Harness
-
-`run_experiment.py` is the **single evaluation harness** reused by every model. It:
-
-1. Loads your checkpoint via `ModelAdapter`
-2. Runs inference on the locked eval split
-3. Reports EER, ROC-AUC, PR-AUC, and latency (mean / p95 / p99)
-4. Writes a versioned `.json` + `.md` report to `data_pipeline/reports/`
-
-**Usage:**
-```bash
-# From repo root
-python data_pipeline/run_experiment.py \
-    --checkpoint  path/to/your_model.pth \
-    --manifest    data_pipeline/manifests/asvspoof19_eval.csv \
-    --output-report data_pipeline/reports/your_model_eval \
-    --split       eval
-```
-
-**Reproducibility requirement (from MD spec):**  
-The same checkpoint + same eval manifest must produce the same EER on every run. Do not shuffle the eval set.
-
----
-
-## Data Leakage Audit
-
-Zero leakage is verified by `check_leakage.py`. Results for ASVspoof 2019 LA:
-
-```
-[PASS] Zero data leakage detected across splits!
-  train samples : 25,380
-  dev   samples : 24,844
-  eval  samples : 71,237
-```
-
-Checks performed:
-- No speaker ID in dev/eval appears in train
-- No utterance ID in dev/eval appears in train
-- No generator ID marked held-out appears in train
-- No duplicate audio file paths across any split
-
-Re-run audit at any time:
-```bash
-python data_pipeline/check_leakage.py --manifest data_pipeline/manifests/asvspoof19_combined.csv
-```
-
----
-
-## Augmentation (Training Only)
-
-`augmentation.py` provides `TrainingAugmentationPipeline` — applied **only** to training samples, never dev or eval. `ManifestAudioDataset` enforces this automatically.
-
-| Augmentation | What it simulates | Requires |
-|---|---|---|
-| `CodecAugmentation` | Real codec encode/decode (AMR-NB / Opus) | `ffmpeg` in PATH |
-| `AdditiveNoise` | White or pink noise at 5–20 dB SNR | Nothing |
-| `RIRConvolution` | Acoustic room reflections | RIR `.wav` files |
-
-**Ablation rule (MD spec):** Before claiming "augmentation improved results", you must:
-1. Train a **clean baseline** (`TrainingAugmentationPipeline` with all flags False, or no pipeline)
-2. Train with augmentation enabled
-3. Compare EER on the **same locked eval split**
-4. Only claim improvement if the augmented run is measurably better
-
-```python
-# Clean baseline (no augmentation)
-aug = TrainingAugmentationPipeline(apply_codec=False, apply_noise=False, apply_rir=False)
-
-# Augmented run
-aug = TrainingAugmentationPipeline(
-    apply_codec=True,   # needs ffmpeg
-    apply_noise=True,
-    apply_rir=False,    # set True + rir_dir if you have RIR files
-)
-```
-
----
-
-## Dataset Statistics (ASVspoof 2019 LA)
-
-| Split | Total | Bonafide | Spoof | Spoof % |
-|-------|-------|----------|-------|---------|
-| train | 25,380 | 2,580 | 22,800 | 89.8% |
-| dev | 24,844 | 2,548 | 22,296 | 89.7% |
-| eval | 71,237 | 7,355 | 63,882 | 89.7% |
-| **Total** | **121,461** | **12,483** | **108,978** | — |
-
-> **Note on class imbalance:** The dataset is ~90% spoof. Training accuracy will appear high (90%+) even for a model that predicts everything as spoof. **Always evaluate on EER, not accuracy.** EER is threshold-independent and treats both error directions equally.
-
----
-
-## Benchmarks to Pass (from MD spec)
-
-| Check | Target |
-|-------|--------|
-| Zero duplicate paths | Verified ✅ |
-| Zero leakage across splits | Verified ✅ |
-| EER on ASVspoof19 LA eval | Clearly better than 50% (random guessing) |
-| Reproducible EER on re-run | Same checkpoint + same eval = same number |
-
----
-
-## Running the Full Pipeline
-
-```bash
-# From repo root — generates manifests + audit + trains LFCC-LCNN + benchmarks
-python data_pipeline/fetch_asvspoof2019.py --epochs 30 --batch-size 64
-
-# Manifests + audit only (no training)
-python data_pipeline/fetch_asvspoof2019.py --skip-training --skip-benchmark
-
-# Benchmark existing checkpoint only
-python data_pipeline/fetch_asvspoof2019.py --skip-training
-
-# Custom dataset root
-python data_pipeline/fetch_asvspoof2019.py --dataset-root D:/MyData/LA
-# or:  set ASVSPOOF_LA_ROOT=D:/MyData/LA
-```
-
----
-
-## Files Person A Should NOT Modify
+## Files Not to Modify
 
 | File | Why |
 |------|-----|
-| `manifests/asvspoof19_eval.csv` | Locked eval set — modifying it invalidates all reported numbers |
+| `manifests/asvspoof19_eval.csv` | Locked eval — modifying invalidates all reported numbers |
 | `schema.py` | Shared contract — changes break every model's loader |
 | `check_leakage.py` | Shared assertion — must remain identical for all teams |
 | `run_experiment.py` | Shared harness — all EER numbers must come from this script |
