@@ -48,7 +48,7 @@ export class AudioEngine {
   }
 
   get sampleRate() {
-    return this.ctx ? this.ctx.sampleRate : TARGET_FALLBACK_RATE;
+    return this.ctx ? this.ctx.sampleRate : TARGET_RATE;
   }
 
   get active() {
@@ -77,7 +77,17 @@ export class AudioEngine {
   async _ensureContext() {
     if (!this.ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
-      this.ctx = new AC();
+      // Ask for 16 kHz — the rate the detector actually works at. Left at the
+      // hardware default (48 kHz here) the browser upsamples the clip, the
+      // backend decimates it back down, and that round trip smears exactly the
+      // high-frequency detail the spoof detectors key on: a real LA bonafide
+      // clip that scores "low" at native 16 kHz came back "high" at 48 kHz.
+      // Declaring whatever we end up with keeps the contract honest either way.
+      try {
+        this.ctx = new AC({ sampleRate: TARGET_RATE });
+      } catch {
+        this.ctx = new AC(); // browser refused the rate; backend will resample
+      }
     }
     if (this.ctx.state === "suspended") await this.ctx.resume();
     if (!this.analyser) {
@@ -245,7 +255,9 @@ export class AudioEngine {
   }
 }
 
-const TARGET_FALLBACK_RATE = 48000;
+// The rate the backend resamples everything to (TARGET_SAMPLE_RATE in task C).
+// Capturing here means no resampling happens anywhere in the chain.
+const TARGET_RATE = 16000;
 
 // Encode a Float32 frame as little-endian bytes for pcm_f32le transport.
 export function floatFrameToBytes(frame) {

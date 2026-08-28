@@ -6,7 +6,7 @@ import { riskMeta, qualityText } from "@/lib/contract.js";
 // recommended next action in plain language. Text and number never disagree —
 // both come from the same message.
 export default function VerdictPanel({ current, status }) {
-  const idle = !current && status !== "running";
+  const idle = !current && status !== "running" && status !== "draining";
   const state = current?.risk_state || (status === "connecting" ? "collecting" : "collecting");
   const meta = riskMeta(state);
   const p = current?.smoothed_probability ?? null;

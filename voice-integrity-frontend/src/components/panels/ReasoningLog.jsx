@@ -24,7 +24,7 @@ export default function ReasoningLog({ reasoning }) {
           return (
             <li key={line.id} className={`log-line log-${line.kind}`}>
               <span className="log-mark" aria-hidden="true">▹</span>
-              {isLast ? <TypeLine text={line.text} /> : <span>{line.text}</span>}
+              {isLast ? <TypeLine key={line.text} text={line.text} /> : <span>{line.text}</span>}
             </li>
           );
         })}
@@ -36,14 +36,15 @@ export default function ReasoningLog({ reasoning }) {
   );
 }
 
+// The caller passes key={text}, so a new line mounts a fresh TypeLine and the
+// typed length resets through useState — no setState in the effect body.
 function TypeLine({ text }) {
-  const [n, setN] = useState(0);
+  const [reduced] = useState(
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+  const [n, setN] = useState(() => (reduced ? text.length : 0));
   useEffect(() => {
-    setN(0);
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setN(text.length);
-      return;
-    }
+    if (reduced) return;
     let i = 0;
     const id = setInterval(() => {
       i += 2;
@@ -51,6 +52,6 @@ function TypeLine({ text }) {
       if (i >= text.length) clearInterval(id);
     }, 14);
     return () => clearInterval(id);
-  }, [text]);
+  }, [reduced, text.length]);
   return <span>{text.slice(0, n)}</span>;
 }

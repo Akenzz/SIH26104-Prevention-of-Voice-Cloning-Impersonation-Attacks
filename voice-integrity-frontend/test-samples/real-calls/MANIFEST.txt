@@ -1,0 +1,26 @@
+ASVspoof2019 LA dev · speaker LA_0076 · spoof system A06 (voice conversion (spectral filtering))
+Dev partition = the partition the shipped calibrator was fitted on. In-domain, flattering.
+
+call_genuine_LA_0076.wav — genuine caller — expect LOW risk
+    LA_D_3482661 (2.0s)
+    LA_D_2380064 (4.5s)
+    LA_D_3956242 (4.1s)
+    LA_D_4513531 (4.1s)
+    LA_D_1300558 (2.0s)
+    LA_D_1353894 (2.2s)
+    LA_D_3983406 (3.5s)
+    LA_D_3327924 (2.7s)
+
+call_cloned_A06_LA_0076.wav — A06 clone — expect HIGH risk
+    LA_D_3128008 (5.6s)
+    LA_D_2886143 (2.4s)
+    LA_D_2441155 (2.2s)
+    LA_D_2879814 (3.3s)
+    LA_D_1570710 (2.7s)
+    LA_D_4599849 (2.6s)
+    LA_D_4458668 (3.7s)
+
+single_genuine_LA_D_3482661.wav — single utterance LA_D_3482661 (genuine)
+single_genuine_LA_D_2380064.wav — single utterance LA_D_2380064 (genuine)
+single_cloned_A06_LA_D_3128008.wav — single utterance LA_D_3128008 (cloned_A06)
+single_cloned_A06_LA_D_2886143.wav — single utterance LA_D_2886143 (cloned_A06)

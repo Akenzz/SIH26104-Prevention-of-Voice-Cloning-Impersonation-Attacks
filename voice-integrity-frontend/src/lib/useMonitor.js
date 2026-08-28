@@ -8,6 +8,14 @@ const SERIES_CAP = 160; // ~80 s of history at a 0.5 s hop
 const REASON_CAP = 60;
 let LINE_ID = 0;
 
+// A file is pushed to the backend far faster than the detector scores it — a
+// 6 s clip uploads in well under a second, while WavLM on CPU needs seconds per
+// 4 s window. So when the file ends we keep the socket open and drain: close
+// only after the backend has gone quiet for DRAIN_IDLE_MS, with a hard cap so a
+// wedged backend can't leave the console spinning forever.
+const DRAIN_IDLE_MS = 12000;
+const DRAIN_MAX_MS = 180000;
+
 // One source-agnostic controller for the console. It drives either the local
 // Simulator or a live backend WebSocket (mic or file) and exposes the same
 // derived state to every panel.
@@ -17,7 +25,7 @@ export function useMonitor() {
   const [inputKind, setInputKind] = useState("mic"); // "mic" | "file"
   const [backendBase, setBackendBase] = useState("");
 
-  const [status, setStatus] = useState("idle"); // idle|connecting|running|stopped|error
+  const [status, setStatus] = useState("idle"); // idle|connecting|running|draining|stopped|error
   const [error, setError] = useState(null);
   const [current, setCurrent] = useState(null);
   const [series, setSeries] = useState([]);
@@ -35,11 +43,13 @@ export function useMonitor() {
   const expectSeqRef = useRef(null);
   const startedAtRef = useRef(null);
   const phaseRef = useRef(0);
+  const drainRef = useRef(null); // { idle: timeoutId, cap: timeoutId, bump: fn } while draining
 
   const pushReason = useCallback((line) => {
     if (!line) return;
+    const entry = { id: ++LINE_ID, ...line }; // id assigned outside the updater: keys must be stable
     setReasoning((r) => {
-      const next = [...r, { id: ++LINE_ID, ...line }];
+      const next = [...r, entry];
       return next.length > REASON_CAP ? next.slice(next.length - REASON_CAP) : next;
     });
   }, []);
@@ -52,21 +62,23 @@ export function useMonitor() {
       }
       // score or error frame
       lastMsgRef.current = msg;
+      if (drainRef.current) drainRef.current.bump(); // backend is still answering
       setCurrent(msg);
 
-      setStats((s) => {
-        const seq = msg.sequence_number;
-        let seqOk = s.seqOk;
-        if (expectSeqRef.current != null && seq !== expectSeqRef.current) seqOk = false;
-        expectSeqRef.current = seq + 1;
-        return {
-          count: s.count + 1,
-          dropped: s.dropped + (msg.dropped_frames ? 1 : 0),
-          maxLatency: Math.max(s.maxLatency, msg.latency_ms || 0),
-          lastSeq: seq,
-          seqOk,
-        };
-      });
+      // Sequence bookkeeping happens out here on purpose: React re-runs state
+      // updaters in dev (StrictMode) to catch impure ones, so advancing a ref
+      // inside setStats would skip a number and report a phantom gap.
+      const seq = msg.sequence_number;
+      const gap = expectSeqRef.current != null && seq !== expectSeqRef.current;
+      expectSeqRef.current = seq + 1;
+
+      setStats((s) => ({
+        count: s.count + 1,
+        dropped: s.dropped + (msg.dropped_frames ? 1 : 0),
+        maxLatency: Math.max(s.maxLatency, msg.latency_ms || 0),
+        lastSeq: seq,
+        seqOk: s.seqOk && !gap,
+      }));
 
       setSeries((arr) => {
         const point = {
@@ -97,14 +109,22 @@ export function useMonitor() {
     setError(null);
   }, []);
 
+  const clearDrain = useCallback(() => {
+    if (!drainRef.current) return;
+    clearTimeout(drainRef.current.idle);
+    clearTimeout(drainRef.current.cap);
+    drainRef.current = null;
+  }, []);
+
   const teardown = useCallback(() => {
+    clearDrain();
     if (simRef.current) simRef.current.stop();
     simRef.current = null;
     if (socketRef.current) socketRef.current.close();
     socketRef.current = null;
     if (engineRef.current) engineRef.current.stop();
     startedAtRef.current = null;
-  }, []);
+  }, [clearDrain]);
 
   const stop = useCallback(() => {
     const last = lastMsgRef.current;
@@ -113,6 +133,32 @@ export function useMonitor() {
     const v = verdictLine(last);
     if (v) pushReason(v);
   }, [teardown, pushReason]);
+
+  // File playback finished: stop pushing audio but keep the socket open so
+  // windows still in the detector come back. Each arriving score re-arms the
+  // idle timer via drainRef.bump().
+  const beginDrain = useCallback(() => {
+    if (engineRef.current) engineRef.current.stop();
+    if (!socketRef.current) {
+      stop();
+      return;
+    }
+    setStatus("draining");
+    const finish = () => {
+      clearDrain();
+      stop();
+    };
+    drainRef.current = {
+      idle: setTimeout(finish, DRAIN_IDLE_MS),
+      cap: setTimeout(finish, DRAIN_MAX_MS),
+      bump: () => {
+        const d = drainRef.current;
+        if (!d) return;
+        clearTimeout(d.idle);
+        d.idle = setTimeout(finish, DRAIN_IDLE_MS);
+      },
+    };
+  }, [clearDrain, stop]);
 
   const startSim = useCallback(() => {
     resetRun();
@@ -125,6 +171,7 @@ export function useMonitor() {
 
   const startLive = useCallback(
     async (file) => {
+      teardown(); // drop any socket/engine/timer left over from a previous run
       resetRun();
       setStatus("connecting");
       const engine = new AudioEngine();
@@ -148,7 +195,7 @@ export function useMonitor() {
           setStatus("error");
         })
         .on("close", () => {
-          setStatus((s) => (s === "error" ? s : "stopped"));
+          setStatus((s) => (s === "error" || s === "draining" ? s : "stopped"));
         });
       socket.connect({ sampleRate, encoding: "pcm_f32le", channels: 1 });
 
@@ -160,7 +207,7 @@ export function useMonitor() {
       startedAtRef.current = performance.now();
       try {
         if (file) {
-          await engine.startFile(file, { onFrame, onEnded: () => stop() });
+          await engine.startFile(file, { onFrame, onEnded: beginDrain });
         } else {
           await engine.startMic({ onFrame });
         }
@@ -174,7 +221,7 @@ export function useMonitor() {
         teardown();
       }
     },
-    [backendBase, handleMessage, resetRun, stop, teardown]
+    [backendBase, handleMessage, resetRun, beginDrain, teardown]
   );
 
   const start = useCallback(
@@ -236,7 +283,7 @@ export function useMonitor() {
     return Math.sqrt(sum / out.length);
   }, []);
 
-  const running = status === "running" || status === "connecting";
+  const running = status === "running" || status === "connecting" || status === "draining";
   const audioActive = source === "live";
 
   return {

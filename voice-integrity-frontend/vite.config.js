@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import { fileURLToPath, URL } from "node:url";
+import process from "node:process"; // explicit import so ESLint's browser globals still apply here
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 

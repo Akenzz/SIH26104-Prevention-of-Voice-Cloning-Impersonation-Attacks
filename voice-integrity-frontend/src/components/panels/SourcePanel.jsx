@@ -145,6 +145,7 @@ export default function SourcePanel({
           <span className="mono">
             {status === "running" && `live · ${fmtTime(elapsedSec)}`}
             {status === "connecting" && "connecting…"}
+            {status === "draining" && "finishing last windows…"}
             {status === "idle" && "idle"}
             {status === "stopped" && "stopped"}
             {status === "error" && "error"}
@@ -165,6 +166,9 @@ export default function SourcePanel({
 
 function StatusDot({ status }) {
   const tone =
-    status === "running" ? "ok" : status === "error" ? "bad" : status === "connecting" ? "warn" : "neutral";
+    status === "running" ? "ok"
+      : status === "error" ? "bad"
+      : status === "connecting" || status === "draining" ? "warn"
+      : "neutral";
   return <span className={`sdot sdot-${tone}`} />;
 }
