@@ -1,0 +1,36 @@
+Backend :
+cd realtime-backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+EXPERTS=wavlm,lfcc DEVICE=cuda python server.py
+
+Frontend :
+cd voice-integrity-frontend
+npm install
+npm run dev
+
+Backend : http://localhost:8000
+Frontend : http://localhost:5173
+
+These commands work for linux and macos.
+
+
+
+
+For windows use the following commands (in PowerShell):
+
+Backend :
+cd realtime-backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+$env:EXPERTS="wavlm,lfcc"; $env:DEVICE="cuda"; python server.py
+
+Frontend :
+cd voice-integrity-frontend
+npm install
+npm run dev
+
+Backend : http://localhost:8000
+Frontend : http://localhost:5173
