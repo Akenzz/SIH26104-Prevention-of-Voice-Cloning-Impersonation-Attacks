@@ -115,6 +115,7 @@ async def predict_file(file: UploadFile = File(...)):
 
     # 3. Score all windows and apply EMA
     ema = ExponentialMovingAverage(settings.ema_alpha)
+    expert_emas = {name: ExponentialMovingAverage(settings.ema_alpha) for name in experts}
     
     results = []
     max_prob = -1.0
@@ -156,6 +157,11 @@ async def predict_file(file: UploadFile = File(...)):
             if smoothed > max_prob:
                 max_prob = smoothed
                 max_prob_idx = window_index
+                
+            # Update individual expert EMAs
+            for name, score_dict in scores.items():
+                expert_prob = calibrator.probability(score_dict["logit"])
+                expert_emas[name].update(expert_prob)
         else:
             smoothed = None
             
@@ -172,11 +178,28 @@ async def predict_file(file: UploadFile = File(...)):
             "raw_per_expert_scores": {k: v["logit"] for k, v in scores.items()} if scores else {}
         })
         
+    # Calculate final individual expert risk states
+    expert_risk_states = {}
+    from policy import decide
+    for name, e_ema in expert_emas.items():
+        if e_ema.value is not None:
+            st, _, _ = decide(
+                quality_ok=True,
+                quality_reason=None,
+                windows_scored=len(windows),
+                smoothed_probability=e_ema.value,
+                config=policy,
+            )
+            expert_risk_states[name] = st
+        else:
+            expert_risk_states[name] = "unavailable"
+        
     summary = {
         "overall_risk_state": final_state,
         "final_smoothed_probability": final_prob,
         "max_probability": max_prob if max_prob >= 0 else None,
-        "max_probability_window_index": max_prob_idx if max_prob_idx >= 0 else None
+        "max_probability_window_index": max_prob_idx if max_prob_idx >= 0 else None,
+        "expert_risk_states": expert_risk_states
     }
     
     return JSONResponse({

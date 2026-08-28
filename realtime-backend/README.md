@@ -167,7 +167,11 @@ The backend exposes the following endpoints on `http://127.0.0.1:8000` (or your 
       "overall_risk_state": "low",
       "final_smoothed_probability": 0.00958,
       "max_probability": 0.10755,
-      "max_probability_window_index": 4
+      "max_probability_window_index": 4,
+      "expert_risk_states": {
+        "wavlm": "low",
+        "lfcc": "low"
+      }
     },
     "windows": [
       {
