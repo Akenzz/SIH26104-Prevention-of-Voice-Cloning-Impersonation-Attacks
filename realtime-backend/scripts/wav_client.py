@@ -1,8 +1,13 @@
-"""Feed a WAV (or generated tone) through the live WebSocket path.
+"""Feed a WAV/FLAC (or generated tone) through the live WebSocket path.
 
 Usage:
     python scripts/wav_client.py
     python scripts/wav_client.py --wav path/to/file.wav --url ws://127.0.0.1:8000/ws
+    python scripts/wav_client.py --wav path/to/file.flac   # any soundfile-readable format
+
+WAV is read with the stdlib ``wave`` module (no deps). Any other extension
+(``.flac``, ``.ogg``, ...) is read via ``soundfile`` if it is installed, so LA
+``.flac`` clips can be fed directly without converting them first.
 """
 
 from __future__ import annotations
@@ -37,6 +42,26 @@ def load_wav_float32(path: Path) -> tuple[np.ndarray, int, int]:
     return samples, rate, channels
 
 
+def load_soundfile_float32(path: Path) -> tuple[np.ndarray, int, int]:
+    """Read any non-WAV format (FLAC, OGG, ...) via soundfile, as float32."""
+    try:
+        import soundfile as sf
+    except ImportError as exc:  # keep the WAV path dependency-free
+        raise SystemExit(
+            f"reading {path.suffix} needs soundfile: pip install soundfile"
+        ) from exc
+    audio, rate = sf.read(str(path), dtype="float32", always_2d=False)
+    channels = 1 if audio.ndim == 1 else audio.shape[1]
+    return np.asarray(audio, dtype=np.float32).reshape(-1), int(rate), channels
+
+
+def load_audio_float32(path: Path) -> tuple[np.ndarray, int, int]:
+    """Dispatch on extension: stdlib wave for .wav, soundfile for everything else."""
+    if path.suffix.lower() == ".wav":
+        return load_wav_float32(path)
+    return load_soundfile_float32(path)
+
+
 def make_tone(seconds: float = 8.0, rate: int = 16000) -> tuple[np.ndarray, int, int]:
     t = np.linspace(0, seconds, int(rate * seconds), endpoint=False, dtype=np.float32)
     audio = (0.2 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
@@ -51,7 +76,7 @@ async def run(url: str, wav: Path | None, chunk_ms: int) -> None:
         samples, rate, channels = make_tone()
         print(f"No WAV given; sending {samples.size / rate:.1f}s generated tone at {rate} Hz")
     else:
-        samples, rate, channels = load_wav_float32(wav)
+        samples, rate, channels = load_audio_float32(wav)
         print(f"Loaded {wav} rate={rate} channels={channels} samples={samples.size}")
 
     pcm = np.asarray(samples, dtype="<f4").tobytes()

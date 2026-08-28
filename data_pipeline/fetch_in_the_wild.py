@@ -67,14 +67,18 @@ def download_and_build_manifest(audio_root: Path) -> Path:
     print(f"      Found snapshot at {snapshot_path}")
 
     zip_files = list(snapshot_path.rglob("*.zip"))
-    if zip_files:
-        print(f"      Extracting {len(zip_files)} zip archive(s)... (This may take a few minutes for 8GB+)")
+    existing_wavs = list(audio_root.rglob("*.wav"))
+    
+    if zip_files and len(existing_wavs) < 1000:
+        print(f"      Extracting {len(zip_files)} zip archive(s)... (This may take 10-20 minutes for 8GB+ on Windows)")
         for zf_path in zip_files:
             try:
                 with zipfile.ZipFile(zf_path, 'r') as zf:
                     zf.extractall(audio_root)
             except Exception as e:
                 print(f"      [WARN] Zip extraction error: {e}")
+    elif zip_files:
+        print(f"      Skipping zip extraction. Found {len(existing_wavs)} files already extracted in {audio_root}.")
     else:
         print(f"      [WARN] No zip files found in snapshot! Trying to scan for raw wavs...")
 
