@@ -1,0 +1,14 @@
+{
+  "version": "policy-v0",
+  "collecting_windows": 2,
+  "low_max": 0.35,
+  "uncertain_max": 0.65,
+  "high_min": 0.65,
+  "actions": {
+    "collecting": "Keep the call going; not enough audio yet to score.",
+    "low": "Smoothed spoof risk is low. Continue, still verify out-of-band for sensitive steps.",
+    "uncertain": "Risk is inconclusive. Pause the request and use a known callback or MFA.",
+    "high": "Smoothed risk is high. Pause the request and verify through a known callback number.",
+    "unavailable": "Audio quality or stream integrity failed. Do not treat this as a real-speech score."
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "version": "fusion-identity-v0",
+  "mode_note": "Offline eval must justify fused mode. Until then FUSION_MODE=single.",
+  "bias": 0.0,
+  "weights": {
+    "dummy": 1.0,
+    "wavlm": 1.0,
+    "lfcc": 1.0
+  }
+}

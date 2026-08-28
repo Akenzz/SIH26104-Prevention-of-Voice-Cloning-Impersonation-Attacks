@@ -1,0 +1,78 @@
+{
+  "model": "LFCC-LCNN (V1)",
+  "slices": {
+    "full_pooled": {
+      "description": "All eval rows pooled (sanity check)",
+      "metrics": {
+        "eer": 0.3734945330997022,
+        "threshold": 3.7770326137542725,
+        "roc_auc": 0.6752597269848877,
+        "pr_auc": 0.9173302692108316,
+        "confusion_matrix": {
+          "true_negatives": 1973,
+          "false_positives": 1178,
+          "false_negatives": 11858,
+          "true_positives": 19921
+        },
+        "num_bonafide": 3151,
+        "num_spoof": 31779,
+        "mean_latency_ms": 12.810169822425292
+      }
+    },
+    "per_dataset": {
+      "In-the-Wild": {
+        "single_class": "spoof",
+        "n_samples": 31779,
+        "mean_logit": 3.787308702161715,
+        "std_logit": 2.3959097983224296,
+        "error_rate_at_zero_threshold": 0.05151200478303282
+      },
+      "Kathbath": {
+        "single_class": "bonafide",
+        "n_samples": 3151,
+        "mean_logit": -2.580294336167187,
+        "std_logit": 7.625106141422833,
+        "error_rate_at_zero_threshold": 0.4500158679784195
+      }
+    },
+    "per_generator": {
+      "unknown": {
+        "single_class": "spoof",
+        "n_samples": 31779,
+        "mean_logit": 3.787308702161715,
+        "std_logit": 2.3959097983224296,
+        "error_rate_at_zero_threshold": 0.05151200478303282
+      }
+    },
+    "per_language": {
+      "en": {
+        "single_class": "spoof",
+        "n_samples": 31779,
+        "mean_logit": 3.787308702161715,
+        "std_logit": 2.3959097983224296,
+        "error_rate_at_zero_threshold": 0.05151200478303282
+      },
+      "hi": {
+        "single_class": "bonafide",
+        "n_samples": 3151,
+        "mean_logit": -2.580294336167187,
+        "std_logit": 7.625106141422833,
+        "error_rate_at_zero_threshold": 0.4500158679784195
+      }
+    },
+    "ood_cross_corpus": {
+      "single_class": "spoof",
+      "n_samples": 31779,
+      "mean_logit": 3.787308702161715,
+      "std_logit": 2.3959097983224296,
+      "error_rate_at_zero_threshold": 0.05151200478303282
+    },
+    "real_only_safety_set": {
+      "single_class": "bonafide",
+      "n_samples": 3151,
+      "mean_logit": -2.580294336167187,
+      "std_logit": 7.625106141422833,
+      "error_rate_at_zero_threshold": 0.4500158679784195
+    }
+  }
+}
