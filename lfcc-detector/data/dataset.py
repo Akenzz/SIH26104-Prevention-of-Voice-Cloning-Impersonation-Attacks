@@ -134,18 +134,26 @@ class AudioDataset(torch.utils.data.Dataset):
         # Remove channel dimension: (1, samples) -> (samples,)
         audio = audio.squeeze(0)
 
-        # Pad or crop to fixed window length
-        if audio.shape[0] < self.window_samples:
-            # Pad with zeros
-            padding = self.window_samples - audio.shape[0]
-            audio = torch.nn.functional.pad(audio, (0, padding))
-        elif audio.shape[0] > self.window_samples:
-            # Random crop during training, center crop during eval
+        # Fit to a fixed window WITHOUT leaking a trivial shortcut.
+        # The silence canary showed bonafide clips are more often <4s than spoof,
+        # so zero-padding taught the model "trailing digital zeros / leading
+        # silence => real". Fix, applied identically to both classes:
+        #   1. trim leading/trailing silence (equalizes onset -> kills lead_sil)
+        #   2. repeat/tile-pad clips shorter than the window (no zero region -> kills zero_frac)
+        #   3. random-crop (train) / center-crop (eval) longer clips, as before
+        audio = self._trim_silence(audio)
+        W = self.window_samples
+        n = audio.shape[0]
+        if n < W:
+            # Tile the actual signal to fill the window (standard anti-spoofing pad).
+            reps = -(-W // max(n, 1))  # ceil division
+            audio = audio.repeat(reps)[:W]
+        elif n > W:
             if self.split == 'train':
-                start = torch.randint(0, audio.shape[0] - self.window_samples + 1, (1,)).item()
+                start = torch.randint(0, n - W + 1, (1,)).item()
             else:
-                start = (audio.shape[0] - self.window_samples) // 2
-            audio = audio[start:start + self.window_samples]
+                start = (n - W) // 2
+            audio = audio[start:start + W]
 
         # Apply augmentation if enabled (placeholder for now)
         if self.augment and self.split == 'train':
@@ -174,6 +182,30 @@ class AudioDataset(torch.utils.data.Dataset):
         if self._aug_pipeline is not None:
             return self._aug_pipeline(audio)
         return audio
+
+    def _trim_silence(self, audio: torch.Tensor) -> torch.Tensor:
+        """
+        Trim leading/trailing silence with a frame-RMS gate (~-20 dB from the
+        loudest frame), applied identically to bonafide and spoof. This equalizes
+        speech onset so the model can't shortcut on "how much leading silence".
+        Falls back to the original clip if trimming would leave almost nothing.
+        """
+        x = audio.detach().cpu().numpy()
+        fl = max(int(0.02 * self.sample_rate), 1)  # 20 ms frames
+        if len(x) < 2 * fl:
+            return audio
+        n_frames = len(x) // fl
+        frames = x[:n_frames * fl].reshape(n_frames, fl)
+        rms = np.sqrt((frames ** 2).mean(axis=1) + 1e-9)
+        thr = max(float(rms.max()) * 0.1, 1e-4)  # -20 dB below loudest frame
+        keep = np.where(rms > thr)[0]
+        if len(keep) == 0:
+            return audio
+        trimmed = audio[keep[0] * fl: (keep[-1] + 1) * fl]
+        # guard: keep original if the gate nuked the clip (e.g. very quiet audio)
+        if trimmed.shape[0] < int(0.2 * self.sample_rate):
+            return audio
+        return trimmed
 
     def get_label_distribution(self) -> dict:
         """Returns count of bonafide vs spoof samples."""

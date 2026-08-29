@@ -24,6 +24,8 @@ Public API used by other team members:
 import numpy as np
 import torch
 import torch.nn as nn
+import os
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
 from transformers import WavLMModel
 
 # ─── Constants ─────────────────────────────────────────────────────────────────
@@ -48,7 +50,7 @@ class WavLMClassifier(nn.Module):
 
         # ── Load frozen backbone ───────────────────────────────────────────────
         print(f"[model] Loading backbone: {backbone_name}")
-        self.backbone = WavLMModel.from_pretrained(backbone_name)
+        self.backbone = WavLMModel.from_pretrained(backbone_name, use_safetensors=False)
 
         # Freeze ALL backbone parameters — no gradient updates ever.
         for param in self.backbone.parameters():

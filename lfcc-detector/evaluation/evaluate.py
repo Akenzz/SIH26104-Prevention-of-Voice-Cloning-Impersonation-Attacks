@@ -17,13 +17,15 @@ from models.detector import LFCCLCNNDetector
 from evaluation.metrics import compute_all_metrics
 
 
-def evaluate_checkpoint(checkpoint_path: str, manifest_path: str, batch_size: int = 16):
+def evaluate_checkpoint(checkpoint_path: str, manifest_path: str, batch_size: int = 16, split=None):
     """
     Run full evaluation of a model checkpoint against a manifest CSV.
+
+    split: which split column value to evaluate ('eval', 'dev', ...). None = all rows.
     """
     detector = LFCCLCNNDetector(checkpoint_path=checkpoint_path)
 
-    dataset = AudioDataset(manifest_path, split=None, window_sec=4.0)
+    dataset = AudioDataset(manifest_path, split=split, window_sec=4.0)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
     bonafide_scores = []
@@ -68,10 +70,12 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate LFCC-LCNN voice cloning detector")
     parser.add_argument("--checkpoint", type=str, default="checkpoints/best_lfcc_lcnn.pth")
     parser.add_argument("--manifest", type=str, default="../data_pipeline/manifests/asvspoof19_eval.csv")
+    parser.add_argument("--split", type=str, default=None,
+                        help="Only score rows whose 'split' column equals this (e.g. 'eval'). Default: all rows.")
     parser.add_argument("--output-json", type=str, default=None)
     args = parser.parse_args()
 
-    metrics = evaluate_checkpoint(args.checkpoint, args.manifest)
+    metrics = evaluate_checkpoint(args.checkpoint, args.manifest, split=args.split)
 
     if args.output_json:
         output_path = Path(args.output_json)
