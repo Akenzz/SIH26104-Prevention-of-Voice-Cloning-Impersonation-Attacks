@@ -34,6 +34,62 @@ class SessionConfig:
     binary_seq: bool = False
 
 
+def process_single_window(
+    window: np.ndarray,
+    settings: Settings,
+    experts: dict[str, Expert],
+    fusion: FusionConfig,
+    calibrator: Calibrator,
+    policy: PolicyConfig,
+    windows_scored: int,
+    smoothed_probability: float | None = None, # If None, will use raw prob
+    dropped_frames: bool = False,
+) -> tuple[str, str, str | None, dict[str, Score], float | None, float | None, QualityResult]:
+    """Core logic to assess, score, fuse, calibrate, and decide on a single window."""
+    quality = assess_window(
+        window,
+        silence_rms=settings.silence_rms,
+        clip_abs=settings.clip_abs,
+        clip_fraction=settings.clip_fraction,
+    )
+    if dropped_frames:
+        quality = QualityResult(False, "dropped_or_reordered")
+
+    if not quality.ok:
+        state, action, flag = decide(
+            quality_ok=False,
+            quality_reason=quality.reason,
+            windows_scored=windows_scored,
+            smoothed_probability=smoothed_probability,
+            config=policy,
+        )
+        return state, action, flag, {}, None, None, quality
+
+    scores: dict[str, Score] = {}
+    for name, expert in experts.items():
+        scores[name] = expert.score(window)
+
+    fused, _used = fuse_logits(
+        scores,
+        fusion,
+        mode=settings.fusion_mode,
+        single_expert=settings.single_expert,
+    )
+    probability = calibrator.probability(fused)
+    
+    # For single-shot (no smoothing), use the raw probability
+    if smoothed_probability is None:
+        smoothed_probability = probability
+
+    state, action, flag = decide(
+        quality_ok=True,
+        quality_reason=None,
+        windows_scored=windows_scored,
+        smoothed_probability=smoothed_probability,
+        config=policy,
+    )
+    return state, action, flag, scores, fused, probability, quality
+
 @dataclass
 class ConnectionState:
     settings: Settings
@@ -214,62 +270,6 @@ class ConnectionState:
             return True
         self.session.next_client_seq = client_seq + 1
         return False
-
-def process_single_window(
-    window: np.ndarray,
-    settings: Settings,
-    experts: dict[str, Expert],
-    fusion: FusionConfig,
-    calibrator: Calibrator,
-    policy: PolicyConfig,
-    windows_scored: int,
-    smoothed_probability: float | None = None, # If None, will use raw prob
-    dropped_frames: bool = False,
-) -> tuple[str, str, str | None, dict[str, Score], float | None, float | None, QualityResult]:
-    """Core logic to assess, score, fuse, calibrate, and decide on a single window."""
-    quality = assess_window(
-        window,
-        silence_rms=settings.silence_rms,
-        clip_abs=settings.clip_abs,
-        clip_fraction=settings.clip_fraction,
-    )
-    if dropped_frames:
-        quality = QualityResult(False, "dropped_or_reordered")
-
-    if not quality.ok:
-        state, action, flag = decide(
-            quality_ok=False,
-            quality_reason=quality.reason,
-            windows_scored=windows_scored,
-            smoothed_probability=smoothed_probability,
-            config=policy,
-        )
-        return state, action, flag, {}, None, None, quality
-
-    scores: dict[str, Score] = {}
-    for name, expert in experts.items():
-        scores[name] = expert.score(window)
-
-    fused, _used = fuse_logits(
-        scores,
-        fusion,
-        mode=settings.fusion_mode,
-        single_expert=settings.single_expert,
-    )
-    probability = calibrator.probability(fused)
-    
-    # For single-shot (no smoothing), use the raw probability
-    if smoothed_probability is None:
-        smoothed_probability = probability
-
-    state, action, flag = decide(
-        quality_ok=True,
-        quality_reason=None,
-        windows_scored=windows_scored,
-        smoothed_probability=smoothed_probability,
-        config=policy,
-    )
-    return state, action, flag, scores, fused, probability, quality
 
 
     def _score_window(
