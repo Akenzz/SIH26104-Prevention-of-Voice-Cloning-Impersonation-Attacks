@@ -132,6 +132,49 @@ policy does).
 > honest failure mode, not a fitted one. Do not fit the calibrator on a corpus
 > the model does not actually separate.
 
+## mc_v3 decision expert + combined-corpus calibrator (current default)
+
+The shipped default decision path now uses **`mc_v3`** (the multi-corpus V3
+LFCC-LCNN, trained across 61 spoof generators over Hindi/English/German — the
+only LFCC checkpoint with *measured* unseen-generator generalization) as the
+`SINGLE_EXPERT`, paired with a calibrator refit on the **combined multi-corpus
+dev split** so the logit→probability mapping matches the Hindi-first deployment
+distribution rather than English-only ASVspoof.
+
+Two mc_v3 calibrators exist; the combined one is the current default:
+
+| Artifact | Fit corpus | `a`, `b` | Held-out ECE | Use |
+|---|---|---|---|---|
+| `calibrator_mc_v3.json` | ASVspoof19 dev (English only) | 0.519, −3.279 | 0.038 | superseded |
+| `calibrator_mc_v3_combined.json` | multicorpus dev (hi 988 + en 2000) | 0.309, −2.582 | 0.066 | **default** |
+
+The combined fit is the honest one for this project: it is calibrated on the
+same Hindi+English mixture the model actually serves. Verified live via
+`/predict-file` — a bonafide ASVspoof clip lands at ~6% and a spoof clip at ~88%.
+Note the modest spoof/bonafide logit separation on this corpus (held-out
+EER ≈ 0.27) is a property of the **generalist mc_v3 model** (capacity spread
+across 61 generators), not a calibration defect — don't expect crisp 5%/95%
+splits. Launch config (see `start_server.ps1` / `how-to-run-backend-and-frontend.txt`):
+
+```bash
+EXPERTS=wavlm,lfcc,hindi,mc_v3 SINGLE_EXPERT=mc_v3 \
+  CALIBRATOR_PATH=artifacts/calibrator_mc_v3_combined.json DEVICE=cuda python server.py
+```
+
+Reproduce the combined fit:
+
+```bash
+python scripts/fit_calibrator.py \
+    --manifest ../data_pipeline/manifests/multicorpus_final.csv \
+    --split dev --expert mc_v3 --balance \
+    --version platt-mc_v3-multicorpus-dev-v1 \
+    --out artifacts/calibrator_mc_v3_combined.json
+```
+
+All experts' **raw** per-window logits are still reported for every loaded
+expert; only the decision band uses mc_v3 + its matched calibrator. The shipped
+`calibrator.json` / `fusion.json` / `policy.json` are untouched.
+
 ## Available Endpoints (for Postman/Testing)
 
 The backend exposes the following endpoints on `http://127.0.0.1:8000` (or your configured host/port).

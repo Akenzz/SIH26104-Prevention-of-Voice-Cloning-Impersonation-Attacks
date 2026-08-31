@@ -164,6 +164,19 @@ def main():
                         help="Pin host memory for faster H->D copies. OFF by default: "
                              "Windows+CUDA can raise 'CUDA error: resource already mapped' "
                              "in the pin-memory thread. Disk I/O is the real bottleneck here.")
+    parser.add_argument("--augment", action="store_true",
+                        help="Enable training-time channel augmentation (data_pipeline "
+                             "TrainingAugmentationPipeline: additive noise now; codec/RIR "
+                             "if ffmpeg / RIR wavs are present). TRAIN split only — dev/eval "
+                             "stay clean. OFF by default: mc_v3 was trained without it, so "
+                             "this flag is the single changed variable for the ablation.")
+    parser.add_argument("--resume-from", type=str, default=None,
+                        help="Warm-start from an existing checkpoint (loads model + optimizer "
+                             "+ epoch + best_eer). Use with a higher --epochs to run 'a few more "
+                             "epochs' on top of a finished run. best_eer carries over, so the "
+                             "output checkpoint is only written if an extra epoch actually beats "
+                             "the resumed model. Point --checkpoint-name at a NEW file to preserve "
+                             "the original.")
     args = parser.parse_args()
 
     config = TrainingConfig(
@@ -191,8 +204,12 @@ def main():
             "       Install CUDA-enabled PyTorch: https://pytorch.org/get-started/locally/"
         )
 
-    # Load datasets
-    train_dataset = AudioDataset(config.train_manifest, split='train', window_sec=config.window_sec)
+    # Load datasets. Augmentation is applied to the TRAIN split only (AudioDataset
+    # itself also hard-gates augment to split=='train'); dev must stay clean so the
+    # early-stopping EER is measured on un-augmented audio.
+    print(f"[INFO] Channel augmentation: {'ON (train split)' if args.augment else 'OFF'}")
+    train_dataset = AudioDataset(config.train_manifest, split='train', window_sec=config.window_sec,
+                                 augment=args.augment)
     dev_dataset = AudioDataset(config.dev_manifest, split='dev', window_sec=config.window_sec)
 
     # On Windows the main-guard (if __name__=='__main__') lets num_workers>0 spawn
@@ -237,18 +254,34 @@ def main():
         print("[WARN] No spoof samples found in train split; using unweighted BCE.")
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
 
+    # Warm-start: resume model + optimizer + epoch counter from a finished run so
+    # "a few more epochs" literally continues that run's trajectory. best_eer is
+    # carried over, so the (new) checkpoint file is only written when an extra
+    # epoch actually beats the resumed model — a no-improvement run leaves no file.
+    start_epoch = 1
+    best_eer = 1.0
+    if args.resume_from:
+        ckpt = torch.load(args.resume_from, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt['model_state_dict'])
+        if 'optimizer_state_dict' in ckpt:
+            optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        start_epoch = int(ckpt.get('epoch', 0)) + 1
+        best_eer = float(ckpt.get('best_eer', 1.0))
+        print(f"[INFO] Resumed from {args.resume_from}: continuing at epoch {start_epoch}, "
+              f"carried best dev EER = {best_eer*100:.4f}% (only saved if beaten)")
+
     print(f"\n--- Starting Training ---")
     print(f"  Train rows  : {len(train_dataset):,}")
     print(f"  Dev rows    : {len(dev_dataset):,}")
-    print(f"  Epochs      : {config.epochs}")
+    print(f"  Epochs      : {start_epoch}..{config.epochs}")
     print(f"  Batch size  : {config.batch_size}")
     print(f"  LR          : {config.learning_rate}")
     print(f"  Log every   : {log_every} batches")
     print(f"  Checkpoint  : {Path(config.output_dir) / checkpoint_name}")
     print(f"{'-'*60}")
 
-    best_eer = 1.0
-    for epoch in range(1, config.epochs + 1):
+    # best_eer / start_epoch were initialised above (carried over on --resume-from)
+    for epoch in range(start_epoch, config.epochs + 1):
         t0 = time.time()
         train_loss, train_acc = train_one_epoch(
             model, train_loader, criterion, optimizer, device,

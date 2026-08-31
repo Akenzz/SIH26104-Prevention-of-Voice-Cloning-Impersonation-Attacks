@@ -31,6 +31,25 @@ HUB_EXPERTS = {
         "filename": "best_lfcc_lcnn.pth",
         "local_name": "best_lfcc_lcnn.pth",
     },
+    # Expert 4: LFCC-LCNN retrained on Hindi (V2 debiased checkpoint). Same
+    # architecture as "lfcc", different training corpus/checkpoint — wired via
+    # the shared LFCCLCNNExpert adapter (experts/loader.py).
+    "hindi": {
+        "repo_id": "sarosh22/hindi_v2_debiased.pth",
+        "filename": "hindi_v2_debiased.pth",
+        "local_name": "hindi_v2_debiased.pth",
+    },
+    # Expert 5: LFCC-LCNN retrained on the multi-corpus V3 mix (Hindi-XTTS +
+    # ASVspoof A01-A06 + MLAAD-en/de, 61 spoof generators). Same architecture as
+    # "lfcc"; the only LFCC checkpoint whose generalization to unseen generators
+    # has been measured (see D:\SIH\multicorpus_v3_summary.md). Wired via the
+    # shared LFCCLCNNExpert adapter. Needs its own calibrator
+    # (artifacts/calibrator_mc_v3.json) — the shipped one is ASVspoof-only.
+    "mc_v3": {
+        "repo_id": "sarosh22/Multicorpus",
+        "filename": "mc_v3.pth",
+        "local_name": "mc_v3.pth",
+    },
 }
 
 

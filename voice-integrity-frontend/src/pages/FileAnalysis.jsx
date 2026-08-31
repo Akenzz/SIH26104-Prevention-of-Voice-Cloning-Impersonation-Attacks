@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import axios from 'axios';
-import { UploadCloud, FileAudio, AlertCircle, BarChart3, Activity } from 'lucide-react';
+import { UploadCloud, FileAudio, AlertCircle, BarChart3, Activity, ChevronDown } from 'lucide-react';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { Badge, RiskBadge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -13,7 +13,28 @@ export default function FileAnalysis() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [expandedExpert, setExpandedExpert] = useState(null);
   const fileInputRef = useRef(null);
+
+  // Aggregate a single expert's raw per-window logits into displayable stats.
+  // The backend reports raw logits (higher = more spoof-like) per window in
+  // `windows[].raw_per_expert_scores`; the model_version map carries its label.
+  const expertStats = (expert) => {
+    const logits = (result?.windows || [])
+      .map((w) => w.raw_per_expert_scores?.[expert])
+      .filter((v) => typeof v === 'number');
+    if (logits.length === 0) return null;
+    const max = Math.max(...logits);
+    const min = Math.min(...logits);
+    const mean = logits.reduce((a, b) => a + b, 0) / logits.length;
+    return {
+      count: logits.length,
+      max,
+      min,
+      mean,
+      version: result?.model_version?.[expert] || '—',
+    };
+  };
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -173,14 +194,66 @@ export default function FileAnalysis() {
             </Card>
 
             <Card>
-              <CardHeader title="Expert Models" />
-              <CardContent className="space-y-3">
-                {result.summary.expert_risk_states && Object.entries(result.summary.expert_risk_states).map(([expert, state]) => (
-                  <div key={expert} className="flex justify-between items-center pb-3 border-b border-zinc-800/50 last:border-0 last:pb-0">
-                    <span className="text-sm font-medium text-zinc-300 uppercase">{expert}</span>
-                    <RiskBadge state={state} />
-                  </div>
-                ))}
+              <CardHeader title="Expert Models" description="Click a model to see its per-window scores" />
+              <CardContent className="space-y-2">
+                {result.summary.expert_risk_states && Object.entries(result.summary.expert_risk_states).map(([expert, state]) => {
+                  const isOpen = expandedExpert === expert;
+                  const stats = isOpen ? expertStats(expert) : null;
+                  return (
+                    <div key={expert} className="border-b border-zinc-800/50 last:border-0">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedExpert(isOpen ? null : expert)}
+                        aria-expanded={isOpen}
+                        className="w-full flex justify-between items-center py-3 text-left hover:opacity-80 transition-opacity"
+                      >
+                        <span className="flex items-center gap-2">
+                          <ChevronDown
+                            size={16}
+                            className={`text-zinc-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                          />
+                          <span className="text-sm font-medium text-zinc-300 uppercase">{expert}</span>
+                        </span>
+                        <RiskBadge state={state} />
+                      </button>
+
+                      {isOpen && (
+                        <div className="pb-3 pl-6 pr-1">
+                          {stats ? (
+                            <div className="rounded-md bg-zinc-900/60 border border-zinc-800 p-3 space-y-2 text-sm">
+                              <div className="flex justify-between">
+                                <span className="text-zinc-500">Model version</span>
+                                <span className="text-zinc-300 font-mono text-xs">{stats.version}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-zinc-500">Peak logit (most spoof-like)</span>
+                                <span className="text-zinc-100 font-medium">{stats.max.toFixed(3)}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-zinc-500">Mean logit</span>
+                                <span className="text-zinc-300">{stats.mean.toFixed(3)}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-zinc-500">Min logit (most bonafide-like)</span>
+                                <span className="text-zinc-300">{stats.min.toFixed(3)}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-zinc-500">Windows scored</span>
+                                <span className="text-zinc-300">{stats.count}</span>
+                              </div>
+                              <p className="text-[11px] text-zinc-600 pt-1 border-t border-zinc-800">
+                                Raw logits: higher = more spoof-like, lower = more bonafide-like. The risk band above
+                                comes from the decision model’s calibrated probability, not these raw values.
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-zinc-500 py-2">No per-window scores available for this model.</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </CardContent>
             </Card>
           </div>

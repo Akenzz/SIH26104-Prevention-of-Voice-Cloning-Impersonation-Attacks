@@ -209,7 +209,9 @@ def collect_scores(args) -> tuple[np.ndarray, np.ndarray, str]:
     manifest = Path(args.manifest).resolve()
     base = manifest.parent
     rows: list[tuple[Path, float]] = []
-    with manifest.open(newline="", encoding="utf-8") as fh:
+    # utf-8-sig strips a leading BOM if the manifest was written with one
+    # (else the first column becomes "﻿path" and path lookups silently miss).
+    with manifest.open(newline="", encoding="utf-8-sig") as fh:
         reader = csv.DictReader(fh)
         for row in reader:
             if args.split and "split" in row and row["split"].strip().lower() != args.split.lower():

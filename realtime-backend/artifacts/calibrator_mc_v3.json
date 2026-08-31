@@ -1,0 +1,29 @@
+{
+  "version": "platt-mc_v3-asvspoof19dev-v1",
+  "kind": "platt",
+  "a": 0.5193570103876031,
+  "b": -3.278925466299887,
+  "note": "Platt fit for expert 'mc_v3' (mc_v3) on asvspoof19_dev.csv split=dev; fit on 2400 windows, 600 held out for eval (total spoof=1500, bonafide=1500), class-balanced so the dataset prior is not baked in (policy bands set the operating point). Refit if the expert, the calibration corpus, or the fusion output changes; validity depends on the fit corpus matching the deployment distribution.",
+  "metadata": {
+    "expert": "mc_v3",
+    "model_version": "mc_v3",
+    "manifest": "asvspoof19_dev.csv",
+    "split": "dev",
+    "balanced": true,
+    "n_windows_total": 3000,
+    "n_windows_fit": 2400,
+    "n_spoof": 1500,
+    "n_bonafide": 1500,
+    "max_windows_per_clip": 1,
+    "shuffle_seed": 0,
+    "held_out_eval": {
+      "n_eval_windows": 600,
+      "ece": 0.03758,
+      "brier": 0.13486,
+      "log_loss": 0.40065,
+      "eer": 0.21,
+      "ece_identity": 0.34207
+    },
+    "fitted_utc": "2026-08-30T02:20:48+00:00"
+  }
+}

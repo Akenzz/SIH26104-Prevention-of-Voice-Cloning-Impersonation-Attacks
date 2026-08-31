@@ -26,12 +26,28 @@ def to_mono(samples: np.ndarray, channels: int) -> np.ndarray:
     raise ValueError(f"audio must be 1D or 2D, got shape {samples.shape}")
 
 
+def _linear_resample(audio: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
+    """Naive linear interpolation. No anti-aliasing — fallback only."""
+    duration = audio.size / float(source_rate)
+    n_out = max(1, int(round(duration * target_rate)))
+    src_t = np.linspace(0.0, duration, num=audio.size, endpoint=False, dtype=np.float64)
+    dst_t = np.linspace(0.0, duration, num=n_out, endpoint=False, dtype=np.float64)
+    return np.interp(dst_t, src_t, audio).astype(np.float32)
+
+
 def to_target_rate(
     samples: np.ndarray,
     source_rate: int,
     target_rate: int,
 ) -> tuple[np.ndarray, bool]:
-    """Linear-resample mono float32 audio. Returns (audio, did_resample)."""
+    """Resample mono float32 audio to target_rate. Returns (audio, did_resample).
+
+    Uses SciPy's polyphase resampler (``resample_poly``), which applies an FIR
+    anti-aliasing filter — important when downsampling (e.g. 48 kHz -> 16 kHz),
+    where naive linear interpolation folds >8 kHz energy back into the band as
+    aliasing artifacts the detector never saw in training. Falls back to linear
+    interpolation only if SciPy is unavailable.
+    """
     if source_rate <= 0 or target_rate <= 0:
         raise ValueError(f"invalid sample rates source={source_rate} target={target_rate}")
     audio = np.asarray(samples, dtype=np.float32).reshape(-1)
@@ -39,11 +55,20 @@ def to_target_rate(
         return audio, False
     if audio.size == 0:
         return audio, True
-    duration = audio.size / float(source_rate)
-    n_out = max(1, int(round(duration * target_rate)))
-    src_t = np.linspace(0.0, duration, num=audio.size, endpoint=False, dtype=np.float64)
-    dst_t = np.linspace(0.0, duration, num=n_out, endpoint=False, dtype=np.float64)
-    resampled = np.interp(dst_t, src_t, audio).astype(np.float32)
+
+    try:
+        from math import gcd
+
+        from scipy.signal import resample_poly
+
+        g = gcd(int(source_rate), int(target_rate))
+        up = int(target_rate) // g
+        down = int(source_rate) // g
+        resampled = resample_poly(audio, up, down).astype(np.float32)
+    except ImportError:
+        logger.warning("scipy unavailable; falling back to linear resample (no anti-aliasing)")
+        resampled = _linear_resample(audio, source_rate, target_rate)
+
     logger.debug(
         "Resampled incoming audio %d Hz -> %d Hz (%d samples -> %d samples)",
         source_rate,

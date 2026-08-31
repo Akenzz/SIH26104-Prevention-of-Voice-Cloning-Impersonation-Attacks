@@ -16,20 +16,32 @@ _WINDOW_SAMPLES = int(WINDOW_SEC * TARGET_SAMPLE_RATE)
 
 
 class LFCCLCNNExpert:
-    """Adapter for Expert 3 (LFCC + LCNN).
+    """Adapter for LFCC + LCNN experts.
 
-    The checkpoint is fetched from the Hub (``sarosh22/lfcc-lcnn-asvspoof19``)
-    and loaded into the vendored architecture in :mod:`experts.lfcc_model`,
-    which is a copy of the trainer's ``LFCCLCNNWithFeatureExtraction``. Higher
-    logit = more spoof evidence. The 128-dim penultimate embedding is returned
-    for fusion.
+    The checkpoint is fetched from the Hub and loaded into the vendored
+    architecture in :mod:`experts.lfcc_model`, which is a copy of the trainer's
+    ``LFCCLCNNWithFeatureExtraction``. Higher logit = more spoof evidence. The
+    128-dim penultimate embedding is returned for fusion.
+
+    A single adapter class serves every LFCC-LCNN checkpoint because they share
+    one architecture (n_lfcc=20, deltas, 128-dim embedding). ``hub_key`` selects
+    which entry in ``config.HUB_EXPERTS`` to download, and ``name`` is the label
+    the expert reports to fusion / the response contract. Defaults reproduce the
+    original ASVspoof19 "lfcc" expert so existing call sites are unaffected.
     """
 
     name = "lfcc"
     model_version = "lfcc-unwired"
 
-    def __init__(self, cache_dir: Path, device: str = "cpu"):
-        spec = HUB_EXPERTS["lfcc"]
+    def __init__(
+        self,
+        cache_dir: Path,
+        device: str = "cpu",
+        hub_key: str = "lfcc",
+        name: str | None = None,
+    ):
+        self.name = name or hub_key
+        spec = HUB_EXPERTS[hub_key]
         self.device = torch.device(device)
         self.checkpoint_path = ensure_checkpoint(
             repo_id=spec["repo_id"],
@@ -67,7 +79,8 @@ class LFCCLCNNExpert:
 
         best_eer = self._blob.get("best_eer") if isinstance(self._blob, dict) else None
         logger.info(
-            "Loaded expert lfcc version=%s from %s (best_eer=%s)",
+            "Loaded expert %s version=%s from %s (best_eer=%s)",
+            self.name,
             self.model_version,
             self.checkpoint_path,
             f"{best_eer:.4f}" if isinstance(best_eer, (int, float)) else "n/a",
