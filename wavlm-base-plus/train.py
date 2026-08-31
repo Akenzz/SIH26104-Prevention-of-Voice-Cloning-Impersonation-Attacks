@@ -24,14 +24,13 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from expert1.dataset import SpeechDataset, WINDOW_SAMPLES
-from expert1.model import WavLMClassifier
+from .dataset import SpeechDataset, WINDOW_SAMPLES
+from .model import WavLMClassifier
 
 # ─── Hyperparameters / paths (edit these or pass via CLI) ─────────────────────
 # TODO: Change MANIFEST_CSV to point at your real dataset manifest.
-# Paths are relative to the project root (where you run `python -m expert1.train`).
-MANIFEST_CSV    = "expert1/data/manifest.csv"
-CHECKPOINT_PATH = "expert1/checkpoints/best_model.pt"
+MANIFEST_CSV    = "wavlm-base-plus/data/manifest.csv"
+CHECKPOINT_PATH = "wavlm-base-plus/checkpoints/best_model_v2.pt"
 BATCH_SIZE      = 8
 NUM_EPOCHS      = 10
 LEARNING_RATE   = 1e-3      # Head-only learning rate
@@ -113,7 +112,8 @@ def main(args):
     # ── Data ──────────────────────────────────────────────────────────────────
     print("[train] Loading datasets ...")
     train_ds = SpeechDataset(args.manifest, split="train")
-    dev_ds   = SpeechDataset(args.manifest, split="dev")
+    dev_manifest = args.dev_manifest if args.dev_manifest else args.manifest
+    dev_ds   = SpeechDataset(dev_manifest, split="dev")
 
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,
@@ -183,7 +183,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--manifest", default=MANIFEST_CSV,
         help="Path to manifest CSV  [default: %(default)s]"
-        # TODO: Pass --manifest /path/to/real_manifest.csv to use your real data
+    )
+    parser.add_argument(
+        "--dev-manifest", default=None,
+        help="Path to a separate dev manifest CSV (if your train and dev splits are in separate files)"
     )
     parser.add_argument(
         "--checkpoint", default=CHECKPOINT_PATH,

@@ -29,12 +29,12 @@ from torch.utils.data import DataLoader, Subset
 from sklearn.metrics import roc_curve
 from tqdm import tqdm
 
-from expert1.dataset import SpeechDataset, WINDOW_SAMPLES
-from expert1.model import WavLMClassifier
+from .dataset import SpeechDataset, WINDOW_SAMPLES
+from .model import WavLMClassifier
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
-MANIFEST_CSV    = "expert1/data/asvspoof_manifest.csv"
-CHECKPOINT_PATH = "expert1/checkpoints/best_model.pt"
+MANIFEST_CSV    = "wavlm-base-plus/data/asvspoof_manifest.csv"
+CHECKPOINT_PATH = "wavlm-base-plus/checkpoints/best_model_v2.pt"
 BATCH_SIZE      = 64    # no grads during eval → large batches are fine
 NUM_WORKERS     = 4     # parallel FLAC loading
 
