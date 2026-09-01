@@ -11,6 +11,32 @@ The first start needs internet and takes a few minutes (~400 MB). Every later
 start is offline.
 
 
+ONE COMMAND, BOTH SERVERS
+=========================
+
+Windows (PowerShell), from the repo root:
+
+  .\start_all.ps1
+
+Linux / macOS:
+
+  ./start_all.sh
+
+It installs dependencies, frees ports 8000 and 5173 if a stale server from an
+earlier run is still holding them, starts the backend, waits until /health
+reports ok, prints which experts loaded, then runs the frontend. Ctrl+C stops
+the frontend (on Windows, close the backend window too; on Linux/macOS Ctrl+C
+stops both).
+
+  .\start_all.ps1 -Stop            just kill whatever is on :8000 and :5173
+  .\start_all.ps1 -SkipInstall     skip pip/npm install, for fast restarts
+  ./start_all.sh --stop            same, on Linux/macOS
+  ./start_all.sh --skip-install
+
+Prefer the manual steps below if you want the two servers in terminals you
+control.
+
+
 LINUX / MACOS
 =============
 

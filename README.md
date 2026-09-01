@@ -41,10 +41,22 @@ a label shortcut.
 ## Run it
 
 The first backend start needs internet and downloads ~400 MB; every later start
-is offline. Full copy-paste instructions, including PowerShell, live in
-[how-to-run-backend-and-frontend.txt](how-to-run-backend-and-frontend.txt).
+is offline. One command brings up both servers from the repo root:
 
-Backend:
+```powershell
+.\start_all.ps1
+```
+
+```bash
+./start_all.sh
+```
+
+It installs dependencies, frees ports 8000/5173 if a stale server is still
+holding them, waits for `/health`, prints which experts loaded, then starts the
+frontend. Add `-SkipInstall` / `--skip-install` for fast restarts, or `-Stop` /
+`--stop` to just kill both servers.
+
+To run them by hand instead — backend:
 
 ```bash
 cd realtime-backend && pip install -r requirements.txt && python server.py
@@ -57,8 +69,12 @@ cd voice-integrity-frontend && npm install && npm run dev
 ```
 
 Backend on <http://localhost:8000> (health: `/health`), frontend on
-<http://localhost:5173>. The frontend dev server proxies `/health`, `/ws` and
+<https://localhost:5173> — the dev server uses a self-signed certificate, so
+click through the browser warning. It proxies `/health`, `/ws` and
 `/predict-file`, so start the backend first.
+
+Full instructions, including PowerShell specifics, are in
+[how-to-run-backend-and-frontend.txt](how-to-run-backend-and-frontend.txt).
 
 The backend binds `0.0.0.0` and has **no authentication** — it is a demo service.
 Do not expose it to an untrusted network.
