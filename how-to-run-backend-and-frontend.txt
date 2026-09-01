@@ -3,9 +3,9 @@ cd realtime-backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-# Decision expert = mc_v3 (multi-corpus V3 LFCC-LCNN, measured unseen-generator
-# generalization) paired with its matched calibrator; all experts' raw scores still reported.
-EXPERTS=wavlm,lfcc,hindi,mc_v3 SINGLE_EXPERT=mc_v3 CALIBRATOR_PATH=artifacts/calibrator_mc_v3_combined.json DEVICE=cuda python server.py
+# Decision expert = hybrid (6-language hybrid clean-model LFCC-LCNN; best measured
+# unseen-generator generalization) paired with its matched calibrator; all experts' raw scores still reported.
+EXPERTS=wavlm,lfcc,hindi,mc_v3,hybrid SINGLE_EXPERT=hybrid CALIBRATOR_PATH=artifacts/calibrator_hybrid_clean.json DEVICE=cuda python server.py
 
 Frontend :
 cd voice-integrity-frontend
@@ -27,8 +27,8 @@ cd realtime-backend
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-# Decision expert = mc_v3 (multi-corpus V3, measured generalization) + its matched calibrator.
-$env:EXPERTS="wavlm,lfcc,hindi,mc_v3"; $env:SINGLE_EXPERT="mc_v3"; $env:CALIBRATOR_PATH="artifacts/calibrator_mc_v3_combined.json"; $env:DEVICE="cuda"; python server.py
+# Decision expert = hybrid (6-language hybrid clean-model, best measured generalization) + its matched calibrator.
+$env:EXPERTS="wavlm,lfcc,hindi,mc_v3,hybrid"; $env:SINGLE_EXPERT="hybrid"; $env:CALIBRATOR_PATH="artifacts/calibrator_hybrid_clean.json"; $env:DEVICE="cuda"; python server.py
 
 Frontend :
 cd voice-integrity-frontend

@@ -50,6 +50,22 @@ HUB_EXPERTS = {
         "filename": "mc_v3.pth",
         "local_name": "mc_v3.pth",
     },
+    # Expert 6: LFCC-LCNN trained on the HYBRID clean-model mix — 6 languages
+    # (hi/en/kn/ml/mr/ta), ~20k bonafide / ~20k spoof base clips VAD-sliced to
+    # 43.8k 4-10s chunks, 130 spoof generators, bonafide<->spoof paired WITHIN
+    # each language so corpus/channel cannot act as a label shortcut, plus
+    # equal-on-both-classes train-time channel augmentation.
+    # First checkpoint to hold up on UNSEEN generators: dev EER 2.42%, held-out
+    # ood_en_mlaad (25 unseen gens) 4.58%, ood_itw (real-world, held-out
+    # speakers) 9.73%, pooled eval_ood 5.91% — versus the near-chance
+    # cross-corpus collapse of the earlier LFCC checkpoints.
+    # Same architecture as "lfcc"; needs its OWN calibrator
+    # (artifacts/calibrator_hybrid_clean.json) — mc_v3's a/b would mis-scale it.
+    "hybrid": {
+        "repo_id": "sarosh22/hybrid-clean",
+        "filename": "hybrid_clean.pth",
+        "local_name": "hybrid_clean.pth",
+    },
 }
 
 

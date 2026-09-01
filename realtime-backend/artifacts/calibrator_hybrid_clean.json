@@ -1,0 +1,29 @@
+{
+  "version": "platt-hybrid_clean-hybriddev-v1",
+  "kind": "platt",
+  "a": 0.44907376680772687,
+  "b": -1.3644504886434792,
+  "note": "Platt fit for expert 'hybrid' (hybrid_clean) on hybrid_vad_chunks.csv split=dev; fit on 792 windows, 198 held out for eval (total spoof=495, bonafide=495), class-balanced so the dataset prior is not baked in (policy bands set the operating point). Refit if the expert, the calibration corpus, or the fusion output changes; validity depends on the fit corpus matching the deployment distribution.",
+  "metadata": {
+    "expert": "hybrid",
+    "model_version": "hybrid_clean",
+    "manifest": "hybrid_vad_chunks.csv",
+    "split": "dev",
+    "balanced": true,
+    "n_windows_total": 990,
+    "n_windows_fit": 792,
+    "n_spoof": 495,
+    "n_bonafide": 495,
+    "max_windows_per_clip": 1,
+    "shuffle_seed": 0,
+    "held_out_eval": {
+      "n_eval_windows": 198,
+      "ece": 0.01744,
+      "brier": 0.01205,
+      "log_loss": 0.04322,
+      "eer": 0.01019,
+      "ece_identity": 0.02252
+    },
+    "fitted_utc": "2026-09-01T13:00:40+00:00"
+  }
+}

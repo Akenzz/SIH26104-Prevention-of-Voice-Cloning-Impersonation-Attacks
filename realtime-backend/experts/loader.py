@@ -56,6 +56,22 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
                 name="mc_v3",
             )
             continue
+        if key == "hybrid":
+            # Same LFCC-LCNN architecture as "lfcc", hybrid clean-model
+            # checkpoint (6 languages, 130 spoof generators, language-paired to
+            # kill the channel=label shortcut). Pair with
+            # CALIBRATOR_PATH=artifacts/calibrator_hybrid_clean.json — every
+            # other calibrator in artifacts/ was fitted on a different expert's
+            # logit scale and would misread these.
+            from .lfcc import LFCCLCNNExpert
+
+            loaded[key] = LFCCLCNNExpert(
+                cache_dir=settings.model_cache_dir,
+                device=settings.device,
+                hub_key="hybrid",
+                name="hybrid",
+            )
+            continue
         if key == "prosody":
             # Interpretable prosody/behavioral expert. Self-contained in the
             # sibling `prosody-detector/` package (not vendored here); we add it

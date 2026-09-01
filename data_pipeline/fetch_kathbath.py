@@ -42,6 +42,10 @@ KATHBATH_LANGUAGES = {
 def download_and_build_manifest(
     audio_root: Path,
     languages: list,
+    out_suffix: str = "",
+    max_shards: int = 0,
+    max_per_lang: int = 0,
+    valid_only: bool = False,
 ) -> tuple:
     audio_root.mkdir(parents=True, exist_ok=True)
     MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
@@ -88,13 +92,27 @@ def download_and_build_manifest(
         local_dir = hf_cache / "parquet" / f"kathbath_{lang_name}"
         local_dir.mkdir(parents=True, exist_ok=True)
 
+        # Only grab as many train shards as needed to satisfy max_per_lang, plus
+        # the (small) valid shards. Each Kathbath train shard holds ~2.5k
+        # utterances, so 1-2 shards is plenty for a few-hundred-clip balance set;
+        # downloading all 33-40 shards would waste tens of GB per language.
+        if valid_only:
+            allow = [f"{lang_name}/valid-*.parquet"]
+            print(f"    Downloading ONLY the small valid split for {lang_name}")
+        elif max_shards and max_shards > 0:
+            allow = [f"{lang_name}/train-{i:05d}-of-*.parquet" for i in range(max_shards)]
+            allow += [f"{lang_name}/valid-*.parquet"]
+            print(f"    Limiting download to first {max_shards} train shard(s) + valid shards")
+        else:
+            allow = [f"data/{lang_name}/*", f"*{lang_name}*"]
+
         try:
             snapshot_download(
                 repo_id=HF_DATASET_ID,
                 repo_type="dataset",
                 cache_dir=str(hf_cache / "hub"),
                 local_dir=str(local_dir),
-                allow_patterns=[f"data/{lang_name}/*", f"*{lang_name}*"],
+                allow_patterns=allow,
                 ignore_patterns=["*.md", "*.json", "*.txt"],
             )
         except Exception as exc:
@@ -116,7 +134,11 @@ def download_and_build_manifest(
         import pyarrow.parquet as pq
 
         i = 0
+        lang_written = 0            # bonafide clips kept for THIS language
         for pq_file in parquet_files:
+            if max_per_lang and lang_written >= max_per_lang:
+                print(f"    [cap] reached {max_per_lang} clips for {lang_name}; stopping")
+                break
             row_split = "eval" if ("valid" in pq_file.name.lower() or "test" in pq_file.name.lower()) else "train"
             target_list = all_eval_rows if row_split == "eval" else all_train_rows
 
@@ -187,10 +209,13 @@ def download_and_build_manifest(
                             "license":        "CC-BY-4.0",
                             "consent":        "yes",
                         })
+                        lang_written += 1
 
                     i += 1
                     if i % 2000 == 0:
                         print(f"      [{i:>6} done] train={len(all_train_rows):,}  eval={len(all_eval_rows):,}", flush=True)
+                    if max_per_lang and lang_written >= max_per_lang:
+                        break
 
                 except Exception as exc:
                     if i < 5:
@@ -201,13 +226,13 @@ def download_and_build_manifest(
 
     if all_train_rows:
         df = pd.DataFrame(all_train_rows, columns=REQUIRED_COLUMNS)
-        train_csv = MANIFEST_DIR / "kathbath_train.csv"
+        train_csv = MANIFEST_DIR / f"kathbath{out_suffix}_train.csv"
         df.to_csv(train_csv, index=False)
         print(f"\n  [OK] Train manifest: {train_csv}  ({len(df):,} rows)")
 
     if all_eval_rows:
         df = pd.DataFrame(all_eval_rows, columns=REQUIRED_COLUMNS)
-        eval_csv = MANIFEST_DIR / "kathbath_eval.csv"
+        eval_csv = MANIFEST_DIR / f"kathbath{out_suffix}_eval.csv"
         df.to_csv(eval_csv, index=False)
         print(f"  [OK] Eval manifest : {eval_csv}  ({len(df):,} rows)")
 
@@ -231,6 +256,17 @@ def main():
     parser = argparse.ArgumentParser(description="Download AI4Bharat Kathbath and build train/eval manifests.")
     parser.add_argument("--dataset-root", type=str, default=str(DEFAULT_AUDIO_ROOT))
     parser.add_argument("--languages", nargs="*", default=["hi"])
+    parser.add_argument("--out-suffix", type=str, default="",
+                        help="Append to manifest name, e.g. '_indic4' -> kathbath_indic4_train.csv "
+                             "(keeps the Hindi kathbath_train.csv from being overwritten)")
+    parser.add_argument("--max-shards", type=int, default=0,
+                        help="Only download the first N train shards per language (+valid). "
+                             "0 = all shards. Use 1-2 for a small balance set.")
+    parser.add_argument("--max-per-lang", type=int, default=0,
+                        help="Stop after writing N bonafide clips per language. 0 = no cap.")
+    parser.add_argument("--valid-only", action="store_true",
+                        help="Download ONLY the small 'valid' split per language (~2.4k clips) "
+                             "instead of any train shards — leanest way to get a balance set.")
     args = parser.parse_args()
 
     audio_root = Path(args.dataset_root)
@@ -242,6 +278,10 @@ def main():
     train_csv, eval_csv = download_and_build_manifest(
         audio_root=audio_root,
         languages=args.languages,
+        out_suffix=args.out_suffix,
+        max_shards=args.max_shards,
+        max_per_lang=args.max_per_lang,
+        valid_only=args.valid_only,
     )
 
     print("\n[3/3] Validating manifests ...")
