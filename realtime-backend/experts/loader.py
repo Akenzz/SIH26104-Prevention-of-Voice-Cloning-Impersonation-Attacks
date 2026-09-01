@@ -12,7 +12,9 @@ logger = logging.getLogger("realtime_backend.experts")
 def load_experts(settings: Settings) -> dict[str, Expert]:
     """Instantiate experts named in settings.experts.
 
-    Real Hub experts are registered here once their adapters are wired.
+    Two real experts are wired: `wavlm` (Person A's WavLM Base+) and `hybrid`
+    (the 6-language LFCC-LCNN clean-model checkpoint). Both pull their weights
+    from Hugging Face on first run and are cached under model_cache/.
     Requesting an unwired name fails at startup instead of silently scoring.
     """
     loaded: dict[str, Expert] = {}
@@ -27,42 +29,12 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
 
             loaded[key] = WavLMExpert(cache_dir=settings.model_cache_dir, device=settings.device)
             continue
-        if key == "lfcc":
-            from .lfcc import LFCCLCNNExpert
-
-            loaded[key] = LFCCLCNNExpert(cache_dir=settings.model_cache_dir, device=settings.device)
-            continue
-        if key == "hindi":
-            # Same LFCC-LCNN architecture as "lfcc", different (Hindi V2) checkpoint.
-            from .lfcc import LFCCLCNNExpert
-
-            loaded[key] = LFCCLCNNExpert(
-                cache_dir=settings.model_cache_dir,
-                device=settings.device,
-                hub_key="hindi",
-                name="hindi",
-            )
-            continue
-        if key == "mc_v3":
-            # Same LFCC-LCNN architecture as "lfcc", multi-corpus V3 checkpoint.
-            # Pair with CALIBRATOR_PATH=artifacts/calibrator_mc_v3.json — the
-            # shipped calibrator is ASVspoof-only and would misread these logits.
-            from .lfcc import LFCCLCNNExpert
-
-            loaded[key] = LFCCLCNNExpert(
-                cache_dir=settings.model_cache_dir,
-                device=settings.device,
-                hub_key="mc_v3",
-                name="mc_v3",
-            )
-            continue
         if key == "hybrid":
-            # Same LFCC-LCNN architecture as "lfcc", hybrid clean-model
-            # checkpoint (6 languages, 130 spoof generators, language-paired to
-            # kill the channel=label shortcut). Pair with
-            # CALIBRATOR_PATH=artifacts/calibrator_hybrid_clean.json — every
-            # other calibrator in artifacts/ was fitted on a different expert's
-            # logit scale and would misread these.
+            # LFCC-LCNN, hybrid clean-model checkpoint (6 languages, 130 spoof
+            # generators, language-paired to kill the channel=label shortcut).
+            # Scored with artifacts/calibrator_hybrid_clean.json — every other
+            # calibrator in artifacts/ was fitted on a different expert's logit
+            # scale and would misread these.
             from .lfcc import LFCCLCNNExpert
 
             loaded[key] = LFCCLCNNExpert(
@@ -72,23 +44,7 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
                 name="hybrid",
             )
             continue
-        if key == "prosody":
-            # Interpretable prosody/behavioral expert. Self-contained in the
-            # sibling `prosody-detector/` package (not vendored here); we add it
-            # to sys.path and import its adapter. Ships its own JSON artifact, so
-            # no Hub download / config entry is needed. Pair with
-            # CALIBRATOR_PATH=<prosody-detector>/artifacts/calibrator_prosody.json.
-            import sys as _sys
-
-            _prosody_pkg = Path(__file__).resolve().parents[2] / "prosody-detector"
-            if str(_prosody_pkg) not in _sys.path:
-                _sys.path.insert(0, str(_prosody_pkg))
-            from expert.prosody_expert import ProsodyExpert
-
-            loaded[key] = ProsodyExpert()
-            logger.info("Loaded expert %s version=%s", key, loaded[key].model_version)
-            continue
-        raise ValueError(f"Unknown expert {name!r}. Known: dummy, wavlm, lfcc, hindi, mc_v3, prosody")
+        raise ValueError(f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid")
     if not loaded:
         raise ValueError("No experts loaded")
     return loaded

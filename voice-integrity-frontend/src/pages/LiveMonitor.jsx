@@ -345,38 +345,66 @@ export default function LiveMonitor() {
         </Card>
       </div>
 
-      {latestData && latestData.scores && (
+      {latestData && (
         <Card>
           <CardHeader title="Detailed Output & Expert Analysis" />
           <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
               <div>
                 <p className="text-sm text-zinc-400 mb-1">Audio Quality</p>
                 {latestData.audio_quality === 'silence' ? (
                   <Badge variant="warning">Silence Detected</Badge>
                 ) : latestData.audio_quality === 'clipping' ? (
                   <Badge variant="danger">Audio Clipping</Badge>
+                ) : latestData.audio_quality ? (
+                  <Badge variant="warning">{String(latestData.audio_quality).replace(/_/g, ' ')}</Badge>
                 ) : (
                   <Badge variant="success">Optimal</Badge>
                 )}
               </div>
-              
+
               <div>
                 <p className="text-sm text-zinc-400 mb-1">Recommended Action</p>
-                <Badge variant={latestData.recommended_action === 'allow' ? 'success' : latestData.recommended_action === 'flag' ? 'warning' : 'danger'}>
-                  {latestData.recommended_action.toUpperCase()}
+                <Badge variant={latestData.risk_state === 'low' ? 'success' : latestData.risk_state === 'uncertain' ? 'warning' : latestData.risk_state === 'high' ? 'danger' : 'default'}>
+                  {latestData.recommended_action || 'Awaiting audio'}
                 </Badge>
               </div>
-
-              {Object.entries(latestData.scores).map(([model, scoreData]) => (
-                <div key={model}>
-                  <p className="text-sm text-zinc-400 mb-1 capitalize">{model} Model</p>
-                  <p className="text-xl font-semibold text-zinc-100">
-                    {(scoreData.probability * 100).toFixed(1)}%
-                  </p>
-                </div>
-              ))}
             </div>
+
+            {/* One card per expert, each showing ITS OWN calibrated probability.
+                Every expert has a separate Platt fit, so these are comparable as
+                verdicts but are not the same number on the same scale. */}
+            {latestData.scores && Object.keys(latestData.scores).length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {Object.entries(latestData.scores).map(([model, scoreData]) => {
+                  const prob = scoreData?.probability;
+                  const hasProb = typeof prob === 'number' && Number.isFinite(prob);
+                  const st = scoreData?.risk_state;
+                  return (
+                    <div key={model} className="rounded-lg border border-zinc-800 p-4">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <p className="text-sm text-zinc-300">{scoreData?.label || model}</p>
+                        <Badge variant={st === 'low' ? 'success' : st === 'uncertain' ? 'warning' : st === 'high' ? 'danger' : 'default'}>
+                          {st ? st.toUpperCase() : 'N/A'}
+                        </Badge>
+                      </div>
+                      <p className="text-2xl font-semibold text-zinc-100">
+                        {hasProb ? `${(prob * 100).toFixed(1)}%` : '—'}
+                        <span className="text-sm font-normal text-zinc-500"> synthetic</span>
+                      </p>
+                      <p className="text-xs text-zinc-500 mt-2">
+                        logit {typeof scoreData?.logit === 'number' ? scoreData.logit.toFixed(2) : '—'}
+                        {scoreData?.model_version ? ` · ${scoreData.model_version}` : ''}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-500">
+                No expert scores in this window (audio quality gate or still collecting).
+              </p>
+            )}
           </CardContent>
         </Card>
       )}

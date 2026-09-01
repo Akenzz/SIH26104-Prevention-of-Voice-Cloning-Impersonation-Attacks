@@ -26,18 +26,18 @@ class LFCCLCNNExpert:
     A single adapter class serves every LFCC-LCNN checkpoint because they share
     one architecture (n_lfcc=20, deltas, 128-dim embedding). ``hub_key`` selects
     which entry in ``config.HUB_EXPERTS`` to download, and ``name`` is the label
-    the expert reports to fusion / the response contract. Defaults reproduce the
-    original ASVspoof19 "lfcc" expert so existing call sites are unaffected.
+    the expert reports to fusion / the response contract. The default is the
+    shipped ``hybrid`` checkpoint (6 languages, 130 spoof generators).
     """
 
-    name = "lfcc"
+    name = "hybrid"
     model_version = "lfcc-unwired"
 
     def __init__(
         self,
         cache_dir: Path,
         device: str = "cpu",
-        hub_key: str = "lfcc",
+        hub_key: str = "hybrid",
         name: str | None = None,
     ):
         self.name = name or hub_key

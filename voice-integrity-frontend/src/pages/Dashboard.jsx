@@ -58,15 +58,15 @@ export default function Dashboard() {
             <div className="flex items-start gap-3">
               <div className="mt-1 text-emerald-500"><Activity size={18}/></div>
               <div>
-                <h4 className="text-zinc-200 font-medium mb-1">Dual-Expert AI</h4>
-                <p>Powered by WavLM Base+ and LFCC-LCNN models for robust spoof detection.</p>
+                <h4 className="text-zinc-200 font-medium mb-1">Two Experts</h4>
+                <p>Expert-1 (WavLM Base+) and Expert-2 (LFCC-LCNN, 6 Indian languages) each score every window independently.</p>
               </div>
             </div>
             <div className="flex items-start gap-3">
               <div className="mt-1 text-emerald-500"><Activity size={18}/></div>
               <div>
-                <h4 className="text-zinc-200 font-medium mb-1">Platt Calibration</h4>
-                <p>Raw logits are calibrated into true probability scores using a Platt scaler fit on ASVspoof19 data.</p>
+                <h4 className="text-zinc-200 font-medium mb-1">Per-Expert Calibration</h4>
+                <p>Each model has its own Platt fit, so its logits become a probability on its own scale. The risk band comes from the configured decision expert.</p>
               </div>
             </div>
             <div className="flex items-start gap-3">

@@ -1,404 +1,225 @@
-# Task C — Real-time voice-clone detection backend
+# Realtime voice-clone detection backend
 
-Own directory. Does not live inside `data_pipeline/` or `lfcc-detector/`.
+FastAPI service. Receives live audio over WebSocket (or a whole file over REST),
+windows it, scores it with two experts, calibrates each expert's logit into its
+own probability, smooths with an EMA, and emits a risk band plus a recommended
+action.
 
-Receives live audio over WebSocket, windows it, scores available experts, optionally fuses, calibrates, smooths, and emits a risk band plus recommended action.
+Not identity verification, not the dashboard, not an LLM explainer.
 
-This is **not** identity verification, **not** the dashboard (task E), and **not** the LLM explainer (task F).
-
-## Status
-
-| Piece | State |
-|---|---|
-| FastAPI `/health` + WebSocket `/ws` | done |
-| Start message → resample to 16 kHz mono (logged, not silent) | done |
-| Ring buffer, 4.0 s window / 0.5 s hop (configurable) | done |
-| DummyExpert so the full path runs without Hub models | done |
-| Hub download + cache for WavLM and LFCC-LCNN | done (load on demand) |
-| LFCC-LCNN (Expert 3) real model wired + `state_dict` load | **done + tested** |
-| WavLM (Expert 1) real model wiring | **done + tested** |
-| Fusion scaffolding (`FUSION_MODE=single` default) | done |
-| Platt calibrator fitted on ASVspoof19 dev (in-domain) + EMA + policy | **done + tested** |
-| Fail-safe: silence / clip / decode / seq gap → `unavailable` | done + tested |
-| WAV client, soak (memory + p95 latency) | done |
-
-Default `EXPERTS=dummy`. **`EXPERTS=wavlm` now runs the real WavLM detector** — it loads `expert1/checkpoints/best_model.pt` (produced by `expert1/train.py`) directly from the repo, or falls back to downloading from `Akenzz/Expert-1` on the Hub. The adapter imports `WavLMClassifier` from the `expert1` package, loads the `model_state_dict` with `strict=True`, and runs inference with fp16 autocast for ~2× GPU throughput. The 768-dim mean-pooled embedding and a single spoof logit are returned on every window. **`EXPERTS=lfcc`** runs the LFCC-LCNN detector (see existing docs). The calibrator is a **Platt fit on ASVspoof2019 LA dev** — see the cross-corpus caveat below.
-
-## Layout
-
-```
-realtime-backend/
-  config.py              window/hop, Hub IDs, env overrides
-  server.py              FastAPI: GET /health, WS /ws
-  pipeline.py            per-connection decode → window → score → policy
-  messages.py            outgoing JSON schema
-  fusion.py              loadable logistic fusion (off by default)
-  calibration.py         loadable logit → probability
-  smoothing.py           EMA
-  policy.py              collecting | low | uncertain | high | unavailable
-  audio/                 resample, ring buffer, quality gates
-  experts/
-    protocol.py          score(window) -> {logit, embedding, model_version}
-    dummy.py             random logit, version dummy-v0
-    hub.py               hf_hub_download into ./model_cache/ (gitignored)
-    wavlm.py             Expert 1 adapter — TODO: model class
-    lfcc.py              Expert 3 adapter — wired to vendored LFCC-LCNN
-    lfcc_model/          vendored LFCC-LCNN architecture (copy of lfcc-detector/models)
-    loader.py            EXPERTS=dummy,wavlm,lfcc
-  artifacts/             fusion.json, calibrator.json, policy.json
-  scripts/               wav_client.py, soak_test.py, inspect_checkpoint.py, fit_calibrator.py
-  tests/
-```
+Label convention: `bonafide` = 0 (negative logit), `spoof` = 1 (positive logit).
+Higher score always means more likely synthetic. Never flip this.
 
 ## Quick start
+
+Zero configuration. `config.py` already defaults to both shipped experts with
+`hybrid` as the decision expert and its matched calibrator.
 
 ```bash
 cd realtime-backend
 pip install -r requirements.txt
-uvicorn server:app --host 0.0.0.0 --port 8000
+python server.py
 ```
 
-Health: `GET http://127.0.0.1:8000/health`
+The first run downloads both checkpoints from Hugging Face into `model_cache/`
+(~400 MB, needs internet). Later runs load from disk and work offline. If the
+download fails, the error names the repo, the file and the local path to drop it
+into manually.
 
-Feed audio (generates a tone if you have no WAV):
+The service binds `0.0.0.0:8000` with **no authentication**. Demo only — do not
+put it on an untrusted network.
 
-```bash
-python scripts/wav_client.py --url ws://127.0.0.1:8000/ws
-python scripts/wav_client.py --wav path/to/file.wav
-```
+## Experts
 
-Unit + fail-safe + WavLM smoke tests (no server required):
-
-```bash
-cd realtime-backend
-pytest                          # all fast tests (slow EER test excluded)
-pytest tests/test_wavlm_expert.py -v   # WavLM-specific tests
-```
-
-**WavLM EER benchmark** against 5 000-sample balanced subset of ASVspoof 2019 LA test:
-
-```bash
-# Requires: expert1/data/asvspoof_manifest.csv + expert1/checkpoints/best_model.pt
-cd realtime-backend
-pytest tests/test_wavlm_expert.py -v -m slow -s
-```
-
-Soak (in-process DummyExpert, RSS + p95 latency vs hop):
-
-```bash
-python scripts/soak_test.py --minutes 2
-python scripts/soak_test.py --minutes 10
-```
-
-## Fitting the calibrator
-
-The shipped `artifacts/calibrator.json` is a **Platt fit** (`kind: "platt"`,
-`a=1.32`, `b=-0.52`, version `platt-lfcc-asvspoof19dev-v1`) of the LFCC-LCNN
-logit, fitted on the **ASVspoof2019 LA dev** split — the same held-out split the
-checkpoint was selected on. `smoothed_probability = sigmoid(a*logit + b)` is
-therefore a real calibrated probability, not an identity passthrough.
-
-Reproduce it (needs `soundfile` + the ASVspoof2019 LA dev audio; the manifest
-paths point at `D:\DatasetSIH\LA`):
-
-```bash
-# prove the fitting math with no audio/model (synthetic, numpy only):
-python scripts/fit_calibrator.py --self-test
-
-# the real in-domain fit that produced the shipped artifact:
-pip install soundfile
-python scripts/fit_calibrator.py \
-    --manifest ../data_pipeline/manifests/asvspoof19_dev.csv \
-    --split dev --expert lfcc --balance --limit 3000 --eval-frac 0.2 \
-    --version platt-lfcc-asvspoof19dev-v1 --out artifacts/calibrator.json
-```
-
-`--balance` subsamples to equal bonafide/spoof (ASVspoof dev is ~9:1 spoof) so
-the dataset prior is **not** baked into `b`; the policy bands set the operating
-point. It reuses the backend's own resampler and the real expert adapter, so the
-logits it fits on come from the same code path that runs live. On the shipped fit
-(3000 clips, 2400 fit / 600 held out): classes separate cleanly (spoof logit
-mean +4.71, bonafide −10.69), **held-out EER 0.0000**, and the fit **halves**
-held-out calibration error vs the identity map (ECE 0.0084→0.0043, log-loss
-0.0101→0.0059). Re-tune `artifacts/policy.json` and **refit** if the expert or
-`FUSION_MODE=fused` output changes (the calibrator must see the same logit the
-policy does).
-
-> **Cross-corpus caveat — read before demoing.** This calibrator (and the LFCC
-> model under it) is validated **in-domain only**. The same checkpoint scores
-> **chance-level on MLAAD** (EER 0.442, real audiobook speech scored *more*
-> spoof-like than TTS), so a Platt fit there produced an *inverted* slope. If the
-> demo audio is not ASVspoof2019-like, treat the probability as unreliable — the
-> honest failure mode, not a fitted one. Do not fit the calibrator on a corpus
-> the model does not actually separate.
-
-## mc_v3 decision expert + combined-corpus calibrator (current default)
-
-The shipped default decision path now uses **`mc_v3`** (the multi-corpus V3
-LFCC-LCNN, trained across 61 spoof generators over Hindi/English/German — the
-only LFCC checkpoint with *measured* unseen-generator generalization) as the
-`SINGLE_EXPERT`, paired with a calibrator refit on the **combined multi-corpus
-dev split** so the logit→probability mapping matches the Hindi-first deployment
-distribution rather than English-only ASVspoof.
-
-Two mc_v3 calibrators exist; the combined one is the current default:
-
-| Artifact | Fit corpus | `a`, `b` | Held-out ECE | Use |
+| Key | Repo | File | Label shown in UI | Calibrator |
 |---|---|---|---|---|
-| `calibrator_mc_v3.json` | ASVspoof19 dev (English only) | 0.519, −3.279 | 0.038 | superseded |
-| `calibrator_mc_v3_combined.json` | multicorpus dev (hi 988 + en 2000) | 0.309, −2.582 | 0.066 | **default** |
+| `wavlm` | `Akenzz/Expert-1` | `best_model.pt` | Expert-1: WavLM Base+ | `artifacts/platt_v2_combined_dataset.json` |
+| `hybrid` | `sarosh22/Expert2` | `hybrid_clean.pth` | Expert-2: LFCC-LCNN Hybrid | `artifacts/calibrator_hybrid_clean.json` |
 
-The combined fit is the honest one for this project: it is calibrated on the
-same Hindi+English mixture the model actually serves. Verified live via
-`/predict-file` — a bonafide ASVspoof clip lands at ~6% and a spoof clip at ~88%.
-Note the modest spoof/bonafide logit separation on this corpus (held-out
-EER ≈ 0.27) is a property of the **generalist mc_v3 model** (capacity spread
-across 61 generators), not a calibration defect — don't expect crisp 5%/95%
-splits. Launch config (see `start_server.ps1` / `how-to-run-backend-and-frontend.txt`):
+`hybrid` is the `SINGLE_EXPERT`: its calibrated probability alone produces the
+risk band. Both experts' logits, probabilities and per-expert bands are reported
+on every window so the UI can show them side by side.
 
-```bash
-EXPERTS=wavlm,lfcc,hindi,mc_v3 SINGLE_EXPERT=mc_v3 \
-  CALIBRATOR_PATH=artifacts/calibrator_mc_v3_combined.json DEVICE=cuda python server.py
-```
+Earlier experts (`lfcc`, `hindi`, `mc_v3`, `prosody`) were removed to keep the
+demo surface at exactly two models. `load_settings()` rejects them by name.
+Recover them from git history if needed. A `dummy` expert (random logit) still
+exists for exercising the pipeline without any checkpoint.
 
-Reproduce the combined fit:
+## Per-expert calibration
 
-```bash
-python scripts/fit_calibrator.py \
-    --manifest ../data_pipeline/manifests/multicorpus_final.csv \
-    --split dev --expert mc_v3 --balance \
-    --version platt-mc_v3-multicorpus-dev-v1 \
-    --out artifacts/calibrator_mc_v3_combined.json
-```
+Each expert's logits sit on their own scale, so each gets its own Platt fit
+(`p = sigmoid(a*logit + b)`). Applying one expert's calibrator to the other's
+logit is a real bug, not a rounding issue — it is how a model ends up reporting
+1.000 on genuine speech.
 
-All experts' **raw** per-window logits are still reported for every loaded
-expert; only the decision band uses mc_v3 + its matched calibrator. The shipped
-`calibrator.json` / `fusion.json` / `policy.json` are untouched.
+If you change `SINGLE_EXPERT` you **must** change `CALIBRATOR_PATH` to that
+expert's calibrator:
 
-## Available Endpoints (for Postman/Testing)
+| `SINGLE_EXPERT` | `CALIBRATOR_PATH` |
+|---|---|
+| `hybrid` (default) | `artifacts/calibrator_hybrid_clean.json` |
+| `wavlm` | `artifacts/platt_v2_combined_dataset.json` |
 
-The backend exposes the following endpoints on `http://127.0.0.1:8000` (or your configured host/port).
+`EXPERT_CALIBRATORS` in `config.py` maps every expert to its calibrator for the
+side-by-side display; `CALIBRATOR_PATH` is only the decision path. An expert with
+a missing calibrator file falls back to the decision calibrator and logs a
+warning — treat that probability as meaningless.
 
-### 1. Health Check
-* **URL**: `http://127.0.0.1:8000/health`
-* **Method**: `GET`
-* **Description**: Returns the current status of the backend, which experts are loaded, configuration parameters, and versions of the policy, calibrator, and fusion modules.
-* **Example Response**:
-  ```json
-  {
-    "status": "ok",
-    "experts": ["wavlm"],
-    "fusion_mode": "single",
-    "window_sec": 4.0,
-    "hop_sec": 0.5,
-    "target_sample_rate": 16000,
-    "threshold_version": "policy-v0",
-    "calibrator_version": "platt-lfcc-asvspoof19dev-v1",
-    "fusion_version": "fusion-identity-v0"
-  }
-  ```
+Refit with `scripts/fit_calibrator.py` (`--self-test` proves the math with no
+audio or model). `--balance` subsamples to equal classes so the dataset prior is
+not baked into `b`. Refit whenever the expert changes or `FUSION_MODE=fused` is
+turned on, because the calibrator must see the same logit the policy does.
 
-### 2. Single File Prediction (REST)
-* **URL**: `http://127.0.0.1:8000/predict-file`
-* **Method**: `POST`
-* **Body**: `multipart/form-data` with a single field named `file` containing the audio file (e.g., .wav, .flac, .mp3).
-* **Description**: A convenience endpoint for testing individual files in Postman. It accepts an audio file, resamples it to 16kHz mono, and processes the *entire* file using the exact same overlapping-window and EMA smoothing logic as the streaming path. Short files are padded to a minimum of one 4.0-second window.
-* **Example Response**:
-  ```json
-  {
-    "summary": {
-      "overall_risk_state": "low",
-      "final_smoothed_probability": 0.00958,
-      "max_probability": 0.10755,
-      "max_probability_window_index": 4,
-      "expert_risk_states": {
-        "wavlm": "low",
-        "lfcc": "low"
-      }
-    },
-    "windows": [
-      {
-        "window_index": 1,
-        "start_time_sec": 0.0,
-        "risk_state": "collecting",
-        "calibrated_probability": 0.00004,
-        "raw_per_expert_scores": {
-          "wavlm": -7.199,
-          "lfcc": -8.145
-        }
-      },
-      {
-        "window_index": 2,
-        "start_time_sec": 0.5,
-        "risk_state": "low",
-        "calibrated_probability": 0.00004,
-        "raw_per_expert_scores": {
-          "wavlm": -7.261,
-          "lfcc": -8.201
-        }
-      }
-    ],
-    "model_version": {
-      "wavlm": "wavlm-base-plus-ep4",
-      "lfcc": "best_lfcc_lcnn"
-    },
-    "calibrator_version": "platt-lfcc-asvspoof19dev-v1",
-    "threshold_version": "policy-v0",
-    "fusion_version": "fusion-identity-v0",
-    "audio_quality": null
-  }
-  ```
+## Endpoints
 
-### 3. Audio Streaming (WebSocket)
-* **URL**: `ws://127.0.0.1:8000/ws`
-* **Method**: WebSocket
-* **Description**: The primary endpoint for real-time audio streaming. Postman supports WebSocket connections. You can connect to this endpoint, send a JSON `start` message, and then send binary PCM frames or JSON `frame` messages. The server will stream back JSON `score` messages. (See "WebSocket protocol" below for exact message formats).
+### `GET /health`
 
-## WebSocket protocol
+Reports loaded experts, `decision_expert`, per-expert `expert_details`
+(key, label, calibrator version, `is_decision_expert`), window/hop, and the
+policy / calibrator / fusion versions.
 
-1. Client connects to `/ws`.
-2. Client sends JSON **start**:
+### `POST /predict-file`
+
+`multipart/form-data`, field `file` (wav/flac/mp3). Resamples to 16 kHz mono and
+runs the whole file through the same windowing and EMA logic as the stream. Short
+files are padded to one 4.0 s window.
+
+`summary` contains `overall_risk_state`, `final_smoothed_probability`,
+`max_probability`, `expert_probabilities`, `expert_risk_states`, an `experts`
+list (label, probability, risk state, calibrator version, decision flag) and
+`decision_expert`. Each entry in `windows` carries `raw_per_expert_scores` and
+`per_expert_probability`.
+
+### `WS /ws`
+
+1. Client sends a JSON start frame:
 
 ```json
-{
-  "type": "start",
-  "sample_rate": 48000,
-  "encoding": "pcm_s16le",
-  "channels": 1
-}
+{"type": "start", "sample_rate": 48000, "encoding": "pcm_s16le", "channels": 1}
 ```
 
-`encoding` is `pcm_s16le` or `pcm_f32le`. Declared rate is trusted; if it is not 16 kHz the server **resamples and logs a warning**.
+`encoding` is `pcm_s16le` or `pcm_f32le`. A declared rate other than 16 kHz is
+resampled and logged.
 
-3. Client sends **binary PCM frames** (same encoding). Optional: `"binary_seq": true` on start, then each binary frame is `uint32le sequence_number || pcm`.
-4. Optional JSON frames: `{"type":"frame","sequence_number":0,"pcm":[...floats]}`. Gaps or reorders emit `unavailable` with `dropped_frames: true`.
+2. Client sends binary PCM frames in that encoding. With `"binary_seq": true` on
+   start, each frame is `uint32le sequence_number || pcm`. JSON frames
+   (`{"type":"frame","sequence_number":0,"pcm":[...]}`) also work; gaps or
+   reorders emit `unavailable` with `dropped_frames: true`.
 
-Outgoing score message (every completed window):
+3. Server replies with one `score` message per completed window:
 
 ```json
 {
   "type": "score",
-  "sequence_number": 1,
-  "risk_state": "collecting",
+  "risk_state": "low",
   "recommended_action": "...",
-  "smoothed_probability": 0.42,
-  "fused_logit": 0.1,
-  "raw_per_expert_scores": {"dummy": 0.1},
-  "model_version": {"dummy": "dummy-v0"},
-  "threshold_version": "policy-v0",
-  "calibrator_version": "platt-lfcc-asvspoof19dev-v1",
-  "fusion_version": "fusion-identity-v0",
-  "fusion_mode": "single",
-  "dropped_frames": false,
-  "audio_quality": null,
+  "smoothed_probability": 0.02,
+  "fused_logit": -7.0,
+  "scores": {
+    "wavlm":  {"logit": 3.0, "probability": 0.95, "risk_state": "high",
+               "model_version": "wavlm-base-plus-ep4",
+               "label": "Expert-1: WavLM Base+", "calibrator_version": "..."},
+    "hybrid": {"logit": -7.0, "probability": 0.01, "risk_state": "low",
+               "model_version": "hybrid_clean",
+               "label": "Expert-2: LFCC-LCNN Hybrid", "calibrator_version": "..."}
+  },
+  "raw_per_expert_scores": {"wavlm": 3.0, "hybrid": -7.0},
+  "model_version": {"wavlm": "wavlm-base-plus-ep4", "hybrid": "hybrid_clean"},
   "window_index": 1,
   "latency_ms": 12.3
 }
 ```
 
-`risk_state` is exactly one of `collecting`, `low`, `uncertain`, `high`, `unavailable`.
+`scores` is what the frontend reads. `raw_per_expert_scores` and `model_version`
+are kept for backward compatibility.
 
-Silence, clipping, decode failure, or a sequence gap **never** produce `low`. They set `risk_state=unavailable`, `smoothed_probability=null`, and `audio_quality` to the reason.
+`risk_state` is exactly one of `collecting`, `low`, `uncertain`, `high`,
+`unavailable`.
 
-## Config (env)
+## Fail-safe
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `EXPERTS` | `dummy` | Comma list: `dummy`, `wavlm`, `lfcc` |
-| `FUSION_MODE` | `single` | `single` or `fused` |
-| `SINGLE_EXPERT` | first loaded | Which expert when mode is `single` |
-| `WINDOW_SEC` | `4.0` | Window length |
-| `HOP_SEC` | `0.5` | Hop length (p95 latency must stay below this) |
-| `EMA_ALPHA` | `0.3` | Smoothing |
-| `DEVICE` | `cpu` | Torch device for real experts |
-| `MODEL_CACHE_DIR` | `./model_cache` | Hub downloads |
-| `PREFETCH_MODELS` | `0` | `1` = download both Hub files at startup |
-| `SILENCE_RMS` | `1e-4` | Below this → `unavailable` / silence |
-| `CLIP_ABS` / `CLIP_FRACTION` | `0.99` / `0.01` | Clipping gate |
-
-Fusion / calibrator / policy math is **not** hardcoded. Replace:
-
-- `artifacts/fusion.json` — logistic weights from an offline dev-set fit
-- `artifacts/calibrator.json` — Platt `a`,`b` (kind `platt` or `identity_sigmoid`)
-- `artifacts/policy.json` — band cuts and recommended-action text
-
-Do not turn on `FUSION_MODE=fused` until an offline eval shows both experts beat baseline, errors differ, and fusion improves the locked metric including unseen-generator slices.
-
-## Hugging Face checkpoints (not in git)
-
-| Expert | Repo | File |
-|---|---|---|
-| WavLM (A) | `Akenzz/Expert-1` | `best_model.pt` |
-| LFCC-LCNN (D) | `sarosh22/lfcc-lcnn-asvspoof19` | `best_lfcc_lcnn.pth` |
-
-Public repos, no token. First use calls `hf_hub_download` into `model_cache/` and logs start/finish. Later boots skip the download if the file is already there.
-
-Inspect a checkpoint without wiring a class:
-
-```bash
-python scripts/inspect_checkpoint.py wavlm
-python scripts/inspect_checkpoint.py lfcc
-```
-
-### Wiring a real expert
-
-**LFCC-LCNN (Expert 3) is already wired.** Run it with:
-
-```bash
-EXPERTS=lfcc FUSION_MODE=single uvicorn server:app --port 8000
-```
-
-Its architecture is vendored byte-for-byte from `lfcc-detector/models/` into
-`experts/lfcc_model/` so the backend runs standalone. The Hub checkpoint loads
-into `LFCCLCNNWithFeatureExtraction(sample_rate=16000, n_lfcc=20,
-with_deltas=True, embedding_dim=128)` with **zero missing/unexpected keys**
-(verified). The checkpoint pickles a `training.config.TrainingConfig` dataclass;
-`experts/hub.py` registers a stub `training.config` module so `torch.load`
-succeeds without the trainer package on the path (the config is discarded — only
-`model_state_dict` is used). If the trainer changes the architecture, re-vendor
-those two files and confirm `load_state_dict` still matches.
-
-**WavLM (Expert 1) is wired and tested.**
-
-`experts/wavlm.py` imports `WavLMClassifier` from the sibling `expert1/` package, loads `model_state_dict` with `strict=True`, runs with fp16 autocast on CUDA, and returns `{logit, embedding (768-dim), model_version}` on every window. Checkpoint resolution:
-
-1. **Local** — `expert1/checkpoints/best_model.pt` (produced by `expert1/train.py`)
-2. **Hub fallback** — `Akenzz/Expert-1 / best_model.pt` (for teammates without a local checkpoint)
-
-Run it with:
-
-```bash
-# From repo root — train first (one-time, ~1 hr for 10 epochs on RTX 2060):
-python -m expert1.train \
-    --manifest expert1/data/asvspoof_manifest.csv \
-    --epochs 10 --batch-size 32 --dev-batches 200
-
-# Then start the backend with WavLM:
-cd realtime-backend
-EXPERTS=wavlm DEVICE=cuda uvicorn server:app --host 0.0.0.0 --port 8000
-
-# Smoke tests (fast, no server needed):
-pytest tests/test_wavlm_expert.py -v
-
-# EER benchmark (5 000-sample balanced subset, ~5 min):
-pytest tests/test_wavlm_expert.py -v -m slow -s
-```
-
-## Fail-safe (required)
+Never default to "real" on a failure path.
 
 | Input | Result |
 |---|---|
 | Near-zero RMS window | `unavailable` / `silence` |
 | Heavily clipped window | `unavailable` / `clipped` |
 | Odd-length / bad PCM | `unavailable` / `decode_failure` |
-| Client seq gap or reorder | `unavailable` / `dropped_or_reordered`, `dropped_frames=true` |
+| Client sequence gap or reorder | `unavailable` / `dropped_or_reordered` |
 | Audio before `start` | `unavailable` / `protocol_error` |
 
-Never default to “real” / `low` on a failure path.
+These set `risk_state=unavailable`, `smoothed_probability=null`, and
+`audio_quality` to the reason.
+
+## Layout
+
+```
+config.py         window/hop, HUB_EXPERTS, EXPERT_LABELS, EXPERT_CALIBRATORS, env overrides
+server.py         FastAPI: /health, /predict-file, /ws
+pipeline.py       per-connection decode -> window -> score -> calibrate -> policy
+messages.py       outgoing JSON schema, incl. per-expert `scores`
+calibration.py    load_calibrator, load_expert_calibrators (platt / platt_sklearn / identity)
+fusion.py         logistic fusion, off by default
+smoothing.py      EMA (per-expert and decision tracks)
+policy.py         collecting | low | uncertain | high | unavailable, plus band()
+audio/            resample, ring buffer, quality gates
+experts/          protocol, dummy, hub (HF download+cache), wavlm, lfcc, lfcc_model/, loader
+artifacts/        calibrators, fusion.json, policy.json
+scripts/          wav_client.py, soak_test.py, inspect_checkpoint.py, fit_calibrator.py
+tests/
+```
+
+`experts/hub.py` also registers a stub `training.config` module so `torch.load`
+can unpickle the LFCC checkpoints without the trainer package on the path (the
+pickled config is discarded; only `model_state_dict` is used).
+
+## Config (env) — all optional
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `EXPERTS` | `wavlm,hybrid` | Comma list: `wavlm`, `hybrid`, `dummy` |
+| `SINGLE_EXPERT` | `hybrid` | Which expert's probability drives the band |
+| `CALIBRATOR_PATH` | `artifacts/calibrator_hybrid_clean.json` | Must match `SINGLE_EXPERT` |
+| `FUSION_MODE` | `single` | `single` or `fused` |
+| `DEVICE` | `cpu` | Torch device; `cuda` needs a CUDA torch build |
+| `WINDOW_SEC` / `HOP_SEC` | `4.0` / `0.5` | p95 latency must stay under the hop |
+| `EMA_ALPHA` | `0.3` | Smoothing |
+| `MODEL_CACHE_DIR` | `./model_cache` | Hub download cache |
+| `PREFETCH_MODELS` | `0` | `1` downloads both checkpoints at startup |
+| `SILENCE_RMS` | `1e-4` | Below this -> `unavailable` / silence |
+| `CLIP_ABS` / `CLIP_FRACTION` | `0.99` / `0.01` | Clipping gate |
+
+`artifacts/fusion.json` has no weight for `hybrid` yet — add one before ever
+setting `FUSION_MODE=fused`. In `single` mode the weights are ignored. Do not
+enable fusion until an offline eval shows both experts beat baseline, their
+errors differ, and fusion improves the locked metric *including* unseen-generator
+slices.
+
+## Tests
+
+```bash
+cd realtime-backend
+pytest
+```
+
+Covers calibration monotonicity, that both experts get distinct calibrators, the
+policy bands, the per-expert message contract, fail-safe paths, and expert smoke
+tests. `pytest -m slow -s` adds the EER benchmarks (needs local eval manifests).
+
+```bash
+python scripts/wav_client.py --wav path/to/file.wav   # feed the WebSocket
+python scripts/soak_test.py --minutes 2               # RSS + p95 latency
+python scripts/inspect_checkpoint.py hybrid           # peek at a checkpoint
+```
 
 ## Claims this service will not make
 
-- It does not prove caller identity.
-- Dummy scores are not detection results.
-- Fusion is not “better because two models exist.”
-- The calibrated probability is trustworthy **only in-domain**: it is fitted and validated on ASVspoof2019 LA, and the same model is chance-level cross-corpus (MLAAD EER 0.442). Out-of-domain, the number is not a real probability.
+- It does not prove caller identity or prevent fraud.
+- `dummy` scores are not detection results.
+- Fusion is not "better because two models exist".
+- A calibrated probability is trustworthy only on audio resembling the corpus it
+  was fitted on. Out of domain, a confident number can still be wrong — check
+  `/health` for which calibrator is actually in use before quoting a probability.
+
+
+

@@ -1,18 +1,20 @@
+# Start the SIH26104 realtime backend (Windows / PowerShell).
+#
+# No environment variables are required: config.py already defaults to the two
+# shipped experts (wavlm + hybrid) with `hybrid` as the decision expert and its
+# matched calibrator. On the first run the checkpoints are downloaded from
+# Hugging Face into realtime-backend/model_cache/ and reused from disk after
+# that. Set $env:DEVICE="cuda" only if you have a working CUDA PyTorch install;
+# the default "cpu" works everywhere.
+#
+#   Expert-1  wavlm   Akenzz/Expert-1     WavLM Base+          (Person A)
+#   Expert-2  hybrid  sarosh22/Expert2    LFCC-LCNN, 6 langs   (decision expert)
+#
+# Override anything only if you are experimenting, e.g.:
+#   $env:SINGLE_EXPERT="wavlm"; $env:CALIBRATOR_PATH="artifacts/platt_v2_combined_dataset.json"
+
 git pull
 cd realtime-backend
 pip install -r requirements.txt
-# Decision expert = hybrid (LFCC-LCNN trained on the 6-language hybrid clean-model
-# mix, 130 spoof generators, bonafide<->spoof paired within each language so
-# corpus/channel can't be a label shortcut). Best measured generalization of any
-# checkpoint here: dev EER 2.42%, unseen-generator ood_en_mlaad 4.58%,
-# real-world ood_itw 9.73%, pooled eval_ood 5.91%. Its matched calibrator is far
-# better behaved than mc_v3's (held-out ECE 0.017 vs 0.066, EER 0.010 vs 0.266).
-# All experts' raw per-window scores are still reported; the risk band uses hybrid.
-$env:EXPERTS="wavlm,lfcc,hindi,mc_v3,hybrid"
-$env:SINGLE_EXPERT="hybrid"
-$env:CALIBRATOR_PATH="artifacts/calibrator_hybrid_clean.json"
-$env:DEVICE="cuda"
-# Previous config (mc_v3 as the decision expert):
-#   $env:EXPERTS="wavlm,lfcc,hindi,mc_v3"; $env:SINGLE_EXPERT="mc_v3"
-#   $env:CALIBRATOR_PATH="artifacts/calibrator_mc_v3_combined.json"
+$env:DEVICE = if ($env:DEVICE) { $env:DEVICE } else { "cpu" }
 uvicorn server:app --host 0.0.0.0 --port 8000

@@ -20,52 +20,52 @@ TARGET_SAMPLE_RATE = 16000
 WINDOW_SEC = float(os.environ.get("WINDOW_SEC", "4.0"))
 HOP_SEC = float(os.environ.get("HOP_SEC", "0.5"))
 
+# Checkpoints are pulled from Hugging Face on first use and cached under
+# model_cache/. experts/hub.py short-circuits when the file already exists, so a
+# fresh clone downloads once and every later run is offline.
+#
+# Only the two shipped decision experts live here. The earlier LFCC checkpoints
+# (lfcc / hindi / mc_v3) and the prosody expert were removed to keep the demo
+# surface to exactly two models; recover them from git history if needed.
 HUB_EXPERTS = {
+    # Expert 1 (Person A): WavLM Base+ front-end + classifier head.
     "wavlm": {
         "repo_id": "Akenzz/Expert-1",
         "filename": "best_model.pt",
         "local_name": "wavlm_best_model.pt",
     },
-    "lfcc": {
-        "repo_id": "sarosh22/lfcc-lcnn-asvspoof19",
-        "filename": "best_lfcc_lcnn.pth",
-        "local_name": "best_lfcc_lcnn.pth",
-    },
-    # Expert 4: LFCC-LCNN retrained on Hindi (V2 debiased checkpoint). Same
-    # architecture as "lfcc", different training corpus/checkpoint — wired via
-    # the shared LFCCLCNNExpert adapter (experts/loader.py).
-    "hindi": {
-        "repo_id": "sarosh22/hindi_v2_debiased.pth",
-        "filename": "hindi_v2_debiased.pth",
-        "local_name": "hindi_v2_debiased.pth",
-    },
-    # Expert 5: LFCC-LCNN retrained on the multi-corpus V3 mix (Hindi-XTTS +
-    # ASVspoof A01-A06 + MLAAD-en/de, 61 spoof generators). Same architecture as
-    # "lfcc"; the only LFCC checkpoint whose generalization to unseen generators
-    # has been measured (see D:\SIH\multicorpus_v3_summary.md). Wired via the
-    # shared LFCCLCNNExpert adapter. Needs its own calibrator
-    # (artifacts/calibrator_mc_v3.json) — the shipped one is ASVspoof-only.
-    "mc_v3": {
-        "repo_id": "sarosh22/Multicorpus",
-        "filename": "mc_v3.pth",
-        "local_name": "mc_v3.pth",
-    },
-    # Expert 6: LFCC-LCNN trained on the HYBRID clean-model mix — 6 languages
+    # Expert 2: LFCC-LCNN trained on the HYBRID clean-model mix — 6 languages
     # (hi/en/kn/ml/mr/ta), ~20k bonafide / ~20k spoof base clips VAD-sliced to
     # 43.8k 4-10s chunks, 130 spoof generators, bonafide<->spoof paired WITHIN
     # each language so corpus/channel cannot act as a label shortcut, plus
     # equal-on-both-classes train-time channel augmentation.
     # First checkpoint to hold up on UNSEEN generators: dev EER 2.42%, held-out
     # ood_en_mlaad (25 unseen gens) 4.58%, ood_itw (real-world, held-out
-    # speakers) 9.73%, pooled eval_ood 5.91% — versus the near-chance
-    # cross-corpus collapse of the earlier LFCC checkpoints.
-    # Same architecture as "lfcc"; needs its OWN calibrator
-    # (artifacts/calibrator_hybrid_clean.json) — mc_v3's a/b would mis-scale it.
+    # speakers) 9.73%, pooled eval_ood 5.91%.
+    # Needs its OWN calibrator (artifacts/calibrator_hybrid_clean.json).
+    # repo_id is the canonical name; huggingface.co/sarosh22/hybrid 307-redirects
+    # here, so both spellings resolve, but this one does not depend on the alias.
     "hybrid": {
-        "repo_id": "sarosh22/hybrid-clean",
+        "repo_id": "sarosh22/Expert2",
         "filename": "hybrid_clean.pth",
         "local_name": "hybrid_clean.pth",
     },
+}
+
+# Human-facing labels for the frontend, so the UI never has to hardcode names.
+# ASCII only — these are echoed straight into JSON.
+EXPERT_LABELS = {
+    "wavlm": "Expert-1: WavLM Base+",
+    "hybrid": "Expert-2: LFCC-LCNN Hybrid",
+}
+
+# Per-expert Platt calibrators. Each expert's logits live on their own scale, so
+# a calibrator fitted on one expert would misread the other. The band/decision
+# still comes from SINGLE_EXPERT via CALIBRATOR_PATH; these are what let the UI
+# show a meaningful probability for BOTH models side by side.
+EXPERT_CALIBRATORS = {
+    "wavlm": ARTIFACTS_DIR / "platt_v2_combined_dataset.json",
+    "hybrid": ARTIFACTS_DIR / "calibrator_hybrid_clean.json",
 }
 
 
@@ -81,14 +81,17 @@ class Settings:
     target_sample_rate: int = TARGET_SAMPLE_RATE
     window_sec: float = WINDOW_SEC
     hop_sec: float = HOP_SEC
-    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "dummy"))
+    # Defaults are the shipped demo config: both experts scored and reported,
+    # `hybrid` drives the risk band. `python server.py` with no env vars set is a
+    # working install; env vars only exist for experiments.
+    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid"))
     fusion_mode: str = os.environ.get("FUSION_MODE", "single")
-    single_expert: str = os.environ.get("SINGLE_EXPERT", "")
+    single_expert: str = os.environ.get("SINGLE_EXPERT", "hybrid")
     ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.3"))
     device: str = os.environ.get("DEVICE", "cpu")
     fusion_path: Path = Path(os.environ.get("FUSION_PATH", str(ARTIFACTS_DIR / "fusion.json")))
     calibrator_path: Path = Path(
-        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "platt_v2_combined_dataset.json"))
+        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "calibrator_hybrid_clean.json"))
     )
     policy_path: Path = Path(os.environ.get("POLICY_PATH", str(ARTIFACTS_DIR / "policy.json")))
     model_cache_dir: Path = MODEL_CACHE_DIR
@@ -112,4 +115,17 @@ def load_settings() -> Settings:
         raise ValueError(f"FUSION_MODE must be 'single' or 'fused', got {settings.fusion_mode!r}")
     if not settings.experts:
         raise ValueError("EXPERTS must list at least one expert")
+    unknown = [e for e in settings.experts if e not in HUB_EXPERTS and e != "dummy"]
+    if unknown:
+        raise ValueError(
+            f"Unknown expert(s) {unknown}. Known: {', '.join(HUB_EXPERTS)}. "
+            "The older lfcc/hindi/mc_v3/prosody experts were removed."
+        )
+    if settings.fusion_mode == "single":
+        if not settings.single_expert:
+            raise ValueError("FUSION_MODE=single requires SINGLE_EXPERT")
+        if settings.single_expert not in settings.experts:
+            raise ValueError(
+                f"SINGLE_EXPERT={settings.single_expert!r} is not in EXPERTS={settings.experts}"
+            )
     return settings

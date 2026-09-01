@@ -9,6 +9,10 @@ torchaudio>=2.1.0
 transformers>=4.39.0
 soundfile>=0.12.0
 huggingface_hub>=0.20.0
-scikit-learn>=1.3.0
+# artifacts/platt_v2_combined_dataset.joblib was pickled with scikit-learn 1.9.0;
+# loading it on an older version emits InconsistentVersionWarning and is not
+# guaranteed to score identically.
+scikit-learn>=1.9.0
+joblib>=1.3.0
 pytest>=7.4.0
 psutil>=5.9.0

@@ -1,39 +1,75 @@
+Quick start — nothing to configure.
+
+Two models are loaded, both downloaded automatically from Hugging Face on the
+first run and cached in realtime-backend/model_cache/ afterwards:
+
+  Expert-1  wavlm   huggingface.co/Akenzz/Expert-1   WavLM Base+
+  Expert-2  hybrid  huggingface.co/sarosh22/Expert2  LFCC-LCNN, 6 languages
+                                                     (this is the decision model)
+
+The first start needs internet and takes a few minutes (~400 MB). Every later
+start is offline.
+
+
+LINUX / MACOS
+=============
+
 Backend :
 cd realtime-backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-# Decision expert = hybrid (6-language hybrid clean-model LFCC-LCNN; best measured
-# unseen-generator generalization) paired with its matched calibrator; all experts' raw scores still reported.
-EXPERTS=wavlm,lfcc,hindi,mc_v3,hybrid SINGLE_EXPERT=hybrid CALIBRATOR_PATH=artifacts/calibrator_hybrid_clean.json DEVICE=cuda python server.py
+python server.py
 
 Frontend :
 cd voice-integrity-frontend
 npm install
 npm run dev
 
-Backend : http://localhost:8000
-Frontend : http://localhost:5173
 
-These commands work for linux and macos.
-
-
-
-
-For windows use the following commands (in PowerShell):
+WINDOWS (PowerShell)
+====================
 
 Backend :
 cd realtime-backend
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-# Decision expert = hybrid (6-language hybrid clean-model, best measured generalization) + its matched calibrator.
-$env:EXPERTS="wavlm,lfcc,hindi,mc_v3,hybrid"; $env:SINGLE_EXPERT="hybrid"; $env:CALIBRATOR_PATH="artifacts/calibrator_hybrid_clean.json"; $env:DEVICE="cuda"; python server.py
+python server.py
 
 Frontend :
 cd voice-integrity-frontend
 npm install
 npm run dev
 
-Backend : http://localhost:8000
+(or just run .\start_server.ps1 from the repo root for the backend)
+
+
+URLS
+====
+
+Backend  : http://localhost:8000       (health check: http://localhost:8000/health)
 Frontend : http://localhost:5173
+
+The frontend proxies /health, /ws and /predict-file to the backend, so start the
+backend first. If your backend is not on port 8000, set BACKEND_ORIGIN before
+npm run dev.
+
+
+OPTIONAL ENV VARS
+=================
+
+You do not need any of these. Defaults live in realtime-backend/config.py.
+
+  DEVICE=cuda                  use the GPU (needs a CUDA PyTorch build; default cpu)
+  EXPERTS=wavlm,hybrid         which experts to load
+  SINGLE_EXPERT=hybrid         which expert's probability drives the risk band
+  CALIBRATOR_PATH=...          must match SINGLE_EXPERT, see below
+  PREFETCH_MODELS=1            download the checkpoints at startup instead of on
+                               first score
+
+If you change SINGLE_EXPERT you MUST change CALIBRATOR_PATH to that expert's
+calibrator, because each model's logits are on their own scale:
+
+  hybrid -> artifacts/calibrator_hybrid_clean.json
+  wavlm  -> artifacts/platt_v2_combined_dataset.json

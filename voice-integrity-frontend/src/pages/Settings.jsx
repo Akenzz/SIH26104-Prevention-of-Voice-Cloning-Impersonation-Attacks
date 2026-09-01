@@ -64,11 +64,19 @@ export default function Settings() {
                 <span className="text-zinc-400 flex items-center gap-2"><Server size={16}/> Backend URL</span>
                 <span className="text-zinc-100 font-mono text-sm">proxied</span>
               </div>
-              <div className="flex justify-between items-center py-2 border-b border-zinc-800/50">
-                <span className="text-zinc-400 flex items-center gap-2"><Cpu size={16}/> Active Experts</span>
-                <div className="flex gap-2">
-                  {health.experts.map(e => <Badge key={e} variant="default">{e}</Badge>)}
+              <div className="flex justify-between items-start py-2 border-b border-zinc-800/50 gap-4">
+                <span className="text-zinc-400 flex items-center gap-2 shrink-0"><Cpu size={16}/> Active Experts</span>
+                <div className="flex flex-wrap gap-2 justify-end">
+                  {(health.expert_details || (health.experts || []).map((n) => ({ name: n, label: n }))).map((e) => (
+                    <Badge key={e.name} variant={e.is_decision_expert ? 'success' : 'default'}>
+                      {e.label || e.name}
+                    </Badge>
+                  ))}
                 </div>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b border-zinc-800/50">
+                <span className="text-zinc-400 flex items-center gap-2"><Settings2 size={16}/> Decision Expert</span>
+                <span className="text-zinc-100 font-mono text-sm">{health.decision_expert || '—'}</span>
               </div>
               <div className="flex justify-between items-center py-2">
                 <span className="text-zinc-400 flex items-center gap-2"><Settings2 size={16}/> Fusion Mode</span>
@@ -96,8 +104,11 @@ export default function Settings() {
                 <span className="text-zinc-400 text-xs uppercase tracking-wider">Versions</span>
                 <div className="text-xs font-mono text-zinc-500 mt-2 space-y-1">
                   <div>Policy: {health.threshold_version}</div>
-                  <div>Calibrator: {health.calibrator_version}</div>
+                  <div>Calibrator (decision): {health.calibrator_version}</div>
                   <div>Fusion: {health.fusion_version}</div>
+                  {(health.expert_details || []).map((e) => (
+                    <div key={e.name}>Calibrator ({e.name}): {e.calibrator_version || '—'}</div>
+                  ))}
                 </div>
               </div>
             </CardContent>

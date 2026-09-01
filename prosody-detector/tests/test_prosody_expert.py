@@ -15,13 +15,18 @@ pytest.importorskip("sklearn")
 
 
 def _load_expert():
-    from experts.loader import load_experts  # exercises the real loader wiring
-    from config import Settings
+    # The realtime backend now ships only the wavlm + hybrid experts, so this
+    # constructs the adapter directly instead of going through its loader.
+    import sys
+    from pathlib import Path
 
-    settings = Settings()
-    settings.experts = ["prosody"]
+    pkg = Path(__file__).resolve().parents[1]
+    if str(pkg) not in sys.path:
+        sys.path.insert(0, str(pkg))
     try:
-        return load_experts(settings)["prosody"]
+        from expert.prosody_expert import ProsodyExpert
+
+        return ProsodyExpert()
     except Exception as exc:  # artifact missing / package not on path
         pytest.skip(f"Prosody expert unavailable in this environment: {exc}")
 

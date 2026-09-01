@@ -303,7 +303,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", help="dev-split manifest CSV (path,label[,split])")
     parser.add_argument("--split", default="dev", help="filter manifest split column")
-    parser.add_argument("--expert", default="lfcc", help="expert to calibrate: lfcc, wavlm")
+    parser.add_argument("--expert", default="hybrid", help="expert to calibrate: hybrid, wavlm")
     parser.add_argument("--out", default=str(ROOT / "artifacts" / "calibrator.json"))
     parser.add_argument("--version", default=None, help="calibrator version label")
     parser.add_argument("--max-windows-per-clip", type=int, default=1)

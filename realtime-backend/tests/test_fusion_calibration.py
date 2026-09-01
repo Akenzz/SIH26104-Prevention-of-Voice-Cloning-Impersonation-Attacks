@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from calibration import load_calibrator
-from config import ARTIFACTS_DIR
+from pathlib import Path
+
+import pytest
+
+from calibration import Calibrator, load_calibrator, load_expert_calibrators
+from config import ARTIFACTS_DIR, EXPERT_CALIBRATORS
 from fusion import fuse_logits, load_fusion
-from policy import decide, load_policy
+from policy import band, decide, load_policy
 from smoothing import ExponentialMovingAverage
 
 
@@ -30,10 +34,38 @@ def test_fused_mode_uses_artifact_weights():
 
 
 def test_identity_calibrator_is_sigmoid():
-    cal = load_calibrator(ARTIFACTS_DIR / "calibrator.json")
+    """The identity kind must be a plain sigmoid (a=1, b=0)."""
+    cal = Calibrator(version="test", kind="identity_sigmoid", a=1.0, b=0.0)
     assert abs(cal.probability(0.0) - 0.5) < 1e-9
     assert cal.probability(8.0) > 0.99
     assert cal.probability(-8.0) < 0.01
+
+
+def test_shipped_calibrators_are_monotonic_in_logit():
+    """Higher logit must mean higher spoof probability for every shipped artifact.
+
+    Each expert's Platt fit has its own a/b, so the absolute values differ; the
+    invariant that must never break is direction (bonafide=0, spoof=1).
+    """
+    for name, path in EXPERT_CALIBRATORS.items():
+        if not Path(path).exists():
+            continue
+        cal = load_calibrator(Path(path))
+        probs = [cal.probability(x) for x in (-8.0, -2.0, 0.0, 2.0, 8.0)]
+        assert all(0.0 <= p <= 1.0 for p in probs), f"{name} produced out-of-range probability"
+        assert probs == sorted(probs), f"{name} calibrator is not monotonic increasing in logit"
+
+
+def test_per_expert_calibrators_are_distinct_and_loaded():
+    """Both experts must get their OWN calibrator, not a shared fallback."""
+    fallback = Calibrator(version="fallback", kind="identity_sigmoid", a=1.0, b=0.0)
+    available = [n for n, p in EXPERT_CALIBRATORS.items() if Path(p).exists()]
+    if len(available) < 2:
+        pytest.skip("both calibrator artifacts must be present for this check")
+    cals = load_expert_calibrators(EXPERT_CALIBRATORS, available, fallback)
+    versions = {n: cals[n].version for n in available}
+    assert "fallback" not in versions.values(), f"an expert fell back: {versions}"
+    assert len(set(versions.values())) == len(available), f"shared calibrator: {versions}"
 
 
 def test_ema_converges_and_resets():
@@ -83,3 +115,56 @@ def test_policy_collecting_then_bands():
     assert bad == "unavailable"
     assert reason == "silence"
     assert "Do not treat" in action or "failed" in action.lower()
+
+
+def test_band_matches_policy_thresholds():
+    policy = load_policy(ARTIFACTS_DIR / "policy.json")
+    assert band(None, policy) == "unavailable"
+    assert band(policy.low_max - 0.01, policy) == "low"
+    assert band(policy.low_max, policy) == "uncertain"
+    assert band(policy.uncertain_max, policy) == "high"
+
+
+def test_build_message_reports_each_expert_with_its_own_probability():
+    """The contract the UI depends on: one entry per expert, each with its own
+    probability, band and calibrator — not one number reused for both."""
+    from messages import build_message
+
+    policy = load_policy(ARTIFACTS_DIR / "policy.json")
+    scores = {
+        "wavlm": {"logit": 3.0, "embedding": None, "model_version": "wavlm-v1"},
+        "hybrid": {"logit": -7.0, "embedding": None, "model_version": "hybrid_clean"},
+    }
+    cals = {
+        "wavlm": Calibrator("cal-wavlm", "platt", 1.0, 0.0),
+        "hybrid": Calibrator("cal-hybrid", "platt", 1.0, 0.0),
+    }
+    msg = build_message(
+        sequence_number=1,
+        risk_state="low",
+        recommended_action="continue",
+        smoothed_probability=0.02,
+        fused_logit=-7.0,
+        scores=scores,
+        threshold_version=policy.version,
+        calibrator_version="cal-hybrid",
+        fusion_version="v1",
+        fusion_mode="single",
+        dropped_frames=False,
+        audio_quality=None,
+        window_index=1,
+        latency_ms=5.0,
+        expert_probabilities={"wavlm": 0.95, "hybrid": 0.01},
+        expert_calibrators=cals,
+        policy=policy,
+    )
+    assert set(msg["scores"]) == {"wavlm", "hybrid"}
+    assert msg["scores"]["wavlm"]["probability"] == 0.95
+    assert msg["scores"]["wavlm"]["risk_state"] == "high"
+    assert msg["scores"]["hybrid"]["probability"] == 0.01
+    assert msg["scores"]["hybrid"]["risk_state"] == "low"
+    assert msg["scores"]["wavlm"]["calibrator_version"] == "cal-wavlm"
+    assert msg["scores"]["hybrid"]["calibrator_version"] == "cal-hybrid"
+    # the original contract fields must stay intact
+    assert msg["raw_per_expert_scores"] == {"wavlm": 3.0, "hybrid": -7.0}
+    assert msg["model_version"]["hybrid"] == "hybrid_clean"

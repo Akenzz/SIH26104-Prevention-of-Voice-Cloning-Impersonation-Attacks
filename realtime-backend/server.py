@@ -15,12 +15,12 @@ import numpy as np
 import soundfile as sf
 
 from audio.resample import to_mono, to_target_rate
-from calibration import load_calibrator
-from config import load_settings
+from calibration import load_calibrator, load_expert_calibrators
+from config import EXPERT_CALIBRATORS, EXPERT_LABELS, load_settings
 from experts.loader import load_experts, prefetch_hub_files
 from fusion import load_fusion
 from pipeline import ConnectionState, process_single_window
-from policy import load_policy
+from policy import band, load_policy
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +33,10 @@ experts: dict[str, Any] = {}
 fusion = load_fusion(settings.fusion_path)
 calibrator = load_calibrator(settings.calibrator_path)
 policy = load_policy(settings.policy_path)
+# One calibrator per expert. The decision band still comes from `calibrator`
+# (the SINGLE_EXPERT one); these exist so each model reports its own honest
+# probability instead of being read on a foreign logit scale.
+expert_calibrators = load_expert_calibrators(EXPERT_CALIBRATORS, settings.experts, calibrator)
 
 
 @asynccontextmanager
@@ -61,10 +65,24 @@ app.add_middleware(
 
 @app.get("/health")
 def health() -> JSONResponse:
+    names = list(experts) or settings.experts
     return JSONResponse(
         {
             "status": "ok",
-            "experts": list(experts) or settings.experts,
+            "experts": names,
+            # Display names + the calibrator behind each expert, so the UI never
+            # has to hardcode model names and a teammate can see at a glance
+            # which artifact produced which probability.
+            "expert_details": [
+                {
+                    "name": n,
+                    "label": EXPERT_LABELS.get(n, n),
+                    "calibrator_version": getattr(expert_calibrators.get(n), "version", None),
+                    "is_decision_expert": n == settings.single_expert,
+                }
+                for n in names
+            ],
+            "decision_expert": settings.single_expert,
             "fusion_mode": settings.fusion_mode,
             "window_sec": settings.window_sec,
             "hop_sec": settings.hop_sec,
@@ -84,21 +102,22 @@ async def predict_file(file: UploadFile = File(...)):
     except Exception as e:
         logger.warning(f"Failed to load uploaded file: {e}")
         # Return unavailable state on bad decode, triggering assess_window failure with empty array
-        state, action, flag, scores, fused, probability, quality = process_single_window(
-            window=np.zeros(0, dtype=np.float32), 
-            settings=settings, experts=experts, fusion=fusion, 
-            calibrator=calibrator, policy=policy, windows_scored=1, 
-            smoothed_probability=None, dropped_frames=False
+        result = process_single_window(
+            window=np.zeros(0, dtype=np.float32),
+            settings=settings, experts=experts, fusion=fusion,
+            calibrator=calibrator, policy=policy, windows_scored=1,
+            smoothed_probability=None, dropped_frames=False,
+            expert_calibrators=expert_calibrators,
         )
         return JSONResponse({
             "summary": {
-                "overall_risk_state": state,
+                "overall_risk_state": result.risk_state,
                 "final_smoothed_probability": None,
                 "max_probability": None,
                 "max_probability_window_index": None
             },
             "windows": [],
-            "audio_quality": quality.reason
+            "audio_quality": result.quality.reason
         })
 
     # 1. Resample to 16kHz mono (reuse logic)
@@ -132,13 +151,14 @@ async def predict_file(file: UploadFile = File(...)):
     final_state = "unavailable"
     final_prob = None
     final_scores = {}
+    final_expert_probs = {}
     final_quality_flag = None
     
     for i, window in enumerate(windows):
         window_index = i + 1
         start_time_sec = i * settings.hop_sec
-        
-        state, action, flag, scores, fused, probability, quality = process_single_window(
+
+        result = process_single_window(
             window=window,
             settings=settings,
             experts=experts,
@@ -146,10 +166,13 @@ async def predict_file(file: UploadFile = File(...)):
             calibrator=calibrator,
             policy=policy,
             windows_scored=window_index,
-            smoothed_probability=None, # pass None first to get raw probability
-            dropped_frames=False
+            smoothed_probability=None,  # pass None first to get raw probability
+            dropped_frames=False,
+            expert_calibrators=expert_calibrators,
         )
-        
+        state, flag = result.risk_state, result.audio_quality
+        scores, probability, quality = result.scores, result.probability, result.quality
+
         if quality.ok and probability is not None:
             smoothed = ema.update(probability)
             # Re-run policy decision with the smoothed probability
@@ -162,53 +185,60 @@ async def predict_file(file: UploadFile = File(...)):
                 config=policy,
             )
             final_prob = smoothed
-            
+
             if smoothed > max_prob:
                 max_prob = smoothed
                 max_prob_idx = window_index
-                
-            # Update individual expert EMAs
-            for name, score_dict in scores.items():
-                expert_prob = calibrator.probability(score_dict["logit"])
+
+            # Each expert is smoothed on its own calibrated probability — using
+            # the global calibrator here would read a foreign logit scale.
+            for name, expert_prob in result.expert_probabilities.items():
                 expert_emas[name].update(expert_prob)
         else:
             smoothed = None
-            
+
         final_state = state
         final_scores = scores
+        final_expert_probs = result.expert_probabilities or final_expert_probs
         if flag or not quality.ok:
             final_quality_flag = flag if flag else quality.reason
-            
+
         results.append({
             "window_index": window_index,
             "start_time_sec": start_time_sec,
             "risk_state": state,
             "calibrated_probability": smoothed if smoothed is not None else probability,
-            "raw_per_expert_scores": {k: v["logit"] for k, v in scores.items()} if scores else {}
+            "raw_per_expert_scores": {k: v["logit"] for k, v in scores.items()} if scores else {},
+            "per_expert_probability": result.expert_probabilities,
         })
-        
-    # Calculate final individual expert risk states
+
+    # Final per-expert verdicts, each from its own calibrated + smoothed track.
     expert_risk_states = {}
-    from policy import decide
+    expert_details = []
     for name, e_ema in expert_emas.items():
-        if e_ema.value is not None:
-            st, _, _ = decide(
-                quality_ok=True,
-                quality_reason=None,
-                windows_scored=len(windows),
-                smoothed_probability=e_ema.value,
-                config=policy,
-            )
-            expert_risk_states[name] = st
-        else:
-            expert_risk_states[name] = "unavailable"
-        
+        value = e_ema.value
+        expert_risk_states[name] = band(value, policy) if value is not None else "unavailable"
+        expert_details.append({
+            "name": name,
+            "label": EXPERT_LABELS.get(name, name),
+            "probability": None if value is None else float(value),
+            "risk_state": expert_risk_states[name],
+            "model_version": (final_scores.get(name) or {}).get("model_version"),
+            "calibrator_version": getattr(expert_calibrators.get(name), "version", None),
+            "is_decision_expert": name == settings.single_expert,
+        })
+
     summary = {
         "overall_risk_state": final_state,
         "final_smoothed_probability": final_prob,
         "max_probability": max_prob if max_prob >= 0 else None,
         "max_probability_window_index": max_prob_idx if max_prob_idx >= 0 else None,
-        "expert_risk_states": expert_risk_states
+        "expert_risk_states": expert_risk_states,
+        "expert_probabilities": {
+            k: (None if v.value is None else float(v.value)) for k, v in expert_emas.items()
+        },
+        "experts": expert_details,
+        "decision_expert": settings.single_expert,
     }
     
     return JSONResponse({
@@ -231,6 +261,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         fusion=fusion,
         calibrator=calibrator,
         policy=policy,
+        expert_calibrators=expert_calibrators,
     )
     logger.info("WebSocket connected")
     try:

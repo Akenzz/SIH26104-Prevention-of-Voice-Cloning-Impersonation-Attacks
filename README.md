@@ -1,193 +1,84 @@
-# Expert 1 — WavLM Deepfake Speech Detector
+# SIH26104 — Prevention of Voice Cloning / Impersonation Attacks
 
-Binary classifier (real vs. AI-generated/cloned speech) built on a **frozen** `microsoft/wavlm-base-plus` backbone with a lightweight trainable linear head.
+Detects synthetic and voice-cloned speech in real time. A React dashboard streams
+microphone audio (or uploads a file) to a FastAPI backend, which windows the audio,
+scores it with two independently trained detectors, calibrates each score into a
+probability, smooths it, and returns a risk band.
 
-## Label Convention — Never Flip This
+**Not** identity verification. It answers "does this audio look machine-generated?",
+not "is this person who they claim to be".
+
+## Label convention — never flip this
 
 | String | Integer | Meaning |
-|--------|---------|---------|
+|---|---|---|
 | `bonafide` | **0** | Real human speech |
-| `spoof` | **1** | AI-generated / voice-cloned / fake speech |
+| `spoof` | **1** | AI-generated / voice-cloned speech |
 
-Higher model logit = more evidence of **fake** speech.
+Higher logit and higher probability always mean **more likely synthetic**.
 
----
+## The two models
 
-## File Overview
+Both are downloaded automatically from Hugging Face on first run and cached in
+`realtime-backend/model_cache/`. No token, no manual download, no env vars.
 
-| File | Purpose |
-|------|---------|
-| `dataset.py` | `SpeechDataset` — reads manifest CSV, resamples to 16 kHz, pads/crops to fixed window |
-| `model.py` | `WavLMClassifier` + `score()` API — frozen backbone + trainable head |
-| `train.py` | Training loop — BCEWithLogitsLoss, AdamW on head only, saves best checkpoint |
-| `evaluate.py` | Loads checkpoint, computes EER and accuracy on the test split |
-| `generate_synthetic_data.py` | Creates `data/audio/*.wav` + `data/manifest.csv` for end-to-end testing |
-| `requirements.txt` | Python dependencies |
+| # | Key | Hugging Face | Architecture | Role |
+|---|---|---|---|---|
+| Expert-1 | `wavlm` | [Akenzz/Expert-1](https://huggingface.co/Akenzz/Expert-1) | Frozen WavLM Base+ backbone + linear head | reported |
+| Expert-2 | `hybrid` | [sarosh22/Expert2](https://huggingface.co/sarosh22/Expert2) | LFCC-LCNN, 6 languages (hi/en/kn/ml/mr/ta) | **drives the risk band** |
 
----
+Each expert has its own Platt calibrator, because their logits live on different
+scales — one shared calibrator would misread the other model. The displayed
+risk band comes from the decision expert (`hybrid`) only; Expert-1's probability
+is shown alongside for comparison.
 
-## Quick Start (Synthetic Data — Run Today)
+Expert-2 numbers: dev EER 2.42%, held-out **unseen-generator** MLAAD 4.58%,
+real-world in-the-wild 9.73%, pooled out-of-domain 5.91%. Trained on ~20k
+bonafide / ~20k spoof base clips (43.8k VAD chunks, 130 spoof generators) with
+bonafide↔spoof paired *within* each language so corpus or channel cannot act as
+a label shortcut.
 
-> All commands are run from the **project root** (`/home/akenzz/sih/project`).
+## Run it
 
-```bash
-# 1. Activate your virtualenv (if using one)
-source .venv/bin/activate          # or: conda activate your-env
+The first backend start needs internet and downloads ~400 MB; every later start
+is offline. Full copy-paste instructions, including PowerShell, live in
+[how-to-run-backend-and-frontend.txt](how-to-run-backend-and-frontend.txt).
 
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Generate synthetic placeholder audio + manifest
-#    TODO: Skip this step when using your real dataset manifest
-python expert1/generate_synthetic_data.py
-
-# 4. Train the model (saves best checkpoint to expert1/checkpoints/best_model.pt)
-python -m expert1.train --epochs 10
-
-# 5. Evaluate on the test split (prints Accuracy + EER)
-python -m expert1.evaluate
-```
-
-### Optional CLI arguments
+Backend:
 
 ```bash
-# Custom manifest or epochs
-python -m expert1.train    --manifest /path/to/real_manifest.csv --epochs 20
-python -m expert1.evaluate --manifest /path/to/real_manifest.csv --checkpoint expert1/checkpoints/best_model.pt
+cd realtime-backend && pip install -r requirements.txt && python server.py
 ```
 
-### Using the score() API from another module
+Frontend (separate terminal):
 
-```python
-import numpy as np
-from expert1.model import load_model, score
-
-# Load once at startup
-load_model("expert1/checkpoints/best_model.pt")
-
-# Score a 4-second audio window (64000 samples @ 16 kHz)
-audio_np = np.zeros(64000, dtype=np.float32)   # replace with real audio
-result = score(audio_np)
-# result = {
-#   "logit"        : float,        # higher = more likely fake/spoof
-#   "embedding"    : list[float],  # 768-dim WavLM representation
-#   "model_version": "wavlm-base-plus-v1",
-# }
+```bash
+cd voice-integrity-frontend && npm install && npm run dev
 ```
 
----
+Backend on <http://localhost:8000> (health: `/health`), frontend on
+<http://localhost:5173>. The frontend dev server proxies `/health`, `/ws` and
+`/predict-file`, so start the backend first.
 
-## Swapping in Your Real Dataset
+The backend binds `0.0.0.0` and has **no authentication** — it is a demo service.
+Do not expose it to an untrusted network.
 
-> **TODO (one change only):** Replace `data/manifest.csv` with a CSV pointing at your
-> real audio files — or pass `--manifest /path/to/your_manifest.csv` to `train.py`
-> and `evaluate.py`. No other code changes are needed.
+## Repository layout
 
-The manifest must have **exactly these columns**:
+| Path | What it is |
+|---|---|
+| `realtime-backend/` | FastAPI service: WebSocket `/ws`, `POST /predict-file`, `GET /health`. See its [README](realtime-backend/README.md). |
+| `voice-integrity-frontend/` | React + Vite dashboard (live monitor, file analysis, settings) |
+| `wavlm-base-plus/` | Expert-1 training/eval code ([README](wavlm-base-plus/README.md)) |
+| `lfcc-detector/` | Expert-2 training/eval code (LFCC-LCNN) |
+| `prosody-detector/` | Experimental interpretable prosody expert — not loaded by the backend |
+| `data_pipeline/` | Manifest building, VAD slicing, dataset prep |
 
-```
-path, label, split, source_dataset, speaker_id, utterance_id,
-generator_id, language, codec, duration_s, license, consent
-```
+## What this project does not claim
 
-- `label` must be the string `"bonafide"` or `"spoof"` (exact match, lower-case)
-- `split` must be `"train"`, `"dev"`, or `"test"`
-- `path` should be the **absolute** path to the WAV file (relative paths work too,
-  relative to the directory you run the script from)
-
-### ASVspoof 2019 LA example
-
-Generate a manifest from the ASVspoof2019 LA protocol files:
-
-```python
-# Pseudocode — adapt paths to your local ASVspoof installation
-# TODO: fill in your actual ASVspoof paths here
-import pandas as pd, glob, os
-
-ASVSPOOFDIR = "/data/ASVspoof2019/LA"
-rows = []
-for split, proto_file in [
-    ("train", f"{ASVSPOOFDIR}/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.train.trn.txt"),
-    ("dev",   f"{ASVSPOOFDIR}/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt"),
-    ("test",  f"{ASVSPOOFDIR}/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.eval.trl.txt"),
-]:
-    with open(proto_file) as f:
-        for line in f:
-            parts = line.strip().split()
-            speaker_id, utt_id, _, system_id, label_str = parts
-            audio_path = os.path.join(
-                ASVSPOOFDIR, f"ASVspoof2019_LA_{split}", "flac", f"{utt_id}.flac"
-            )
-            rows.append({
-                "path": audio_path, "label": label_str.lower(),
-                "split": split, "source_dataset": "asvspoof2019_la",
-                "speaker_id": speaker_id, "utterance_id": utt_id,
-                "generator_id": system_id, "language": "en",
-                "codec": "flac", "duration_s": -1,
-                "license": "asvspoof2019", "consent": "research"
-            })
-pd.DataFrame(rows).to_csv("data/asvspoof2019_la_manifest.csv", index=False)
-```
-
----
-
-## Using the `score()` API
-
-Other modules should call `score()` — this is the stable contract:
-
-```python
-import numpy as np
-from model import load_model, score
-
-# Load once (at startup)
-load_model("checkpoints/best_model.pt")
-
-# Call for each audio window
-audio_np = np.zeros(64000, dtype=np.float32)   # 4 s @ 16 kHz
-result = score(audio_np)
-
-# result = {
-#   "logit"        : float,        # higher = more likely fake/spoof
-#   "embedding"    : list[float],  # 768-dim WavLM representation
-#   "model_version": "wavlm-base-plus-v1",
-# }
-```
-
----
-
-## Architecture
-
-```
-Input waveform (B, 64000)
-        │
-        ▼
-WavLMModel (FROZEN — no grad)
-        │  last_hidden_state  (B, T, 768)
-        │
-        ▼
-  Mean pooling across T  →  (B, 768)
-        │
-        ▼
-  Linear(768 → 256) + GELU + Dropout(0.1)
-        │
-        ▼
-  Linear(256 → 1)   →  logit  (B, 1)
-```
-
-- **Backbone**: `microsoft/wavlm-base-plus` (~94 M params, all frozen)
-- **Head**: ~197 K trainable params
-- **Loss**: `BCEWithLogitsLoss`
-- **Optimiser**: AdamW on head params only
-- **Primary metric**: EER (Equal Error Rate) — lower is better; random chance ≈ 50 %
-
----
-
-## What's NOT in this version (by design)
-
-- ❌ Attention pooling / specaugment / data augmentation
-- ❌ Backbone fine-tuning / unfreezing
-- ❌ Calibration / probability scaling
-- ❌ Fusion with other models
-- ❌ Streaming / real-time inference (handled by the rest of the project)
-
-These are deferred to later iterations.
+- It does not prevent fraud, prove identity, or verify a speaker.
+- The calibrated probability is only as good as the corpora it was fitted on;
+  out-of-domain audio can be scored confidently and wrongly.
+- Held-out (unseen-generator) numbers are reported separately from in-domain
+  numbers above, and only the held-out ones predict field behaviour.
+- Voices were cloned only with the consent of team members; no public figures.

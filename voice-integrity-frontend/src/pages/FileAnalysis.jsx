@@ -36,6 +36,22 @@ export default function FileAnalysis() {
     };
   };
 
+  // `summary.experts` is the backend's own list (label, own calibrated
+  // probability, own band, decision-expert flag). Falling back to the older
+  // expert_risk_states map keeps this working against an older backend.
+  const expertList = () => {
+    if (Array.isArray(result?.summary?.experts) && result.summary.experts.length > 0) {
+      return result.summary.experts;
+    }
+    return Object.entries(result?.summary?.expert_risk_states || {}).map(([name, state]) => ({
+      name,
+      label: name,
+      risk_state: state,
+      probability: null,
+      is_decision_expert: false,
+    }));
+  };
+
   const handleDrag = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -194,11 +210,14 @@ export default function FileAnalysis() {
             </Card>
 
             <Card>
-              <CardHeader title="Expert Models" description="Click a model to see its per-window scores" />
+              <CardHeader title="Expert Models" description="Each model's own calibrated verdict — click for per-window scores" />
               <CardContent className="space-y-2">
-                {result.summary.expert_risk_states && Object.entries(result.summary.expert_risk_states).map(([expert, state]) => {
+                {expertList().map((e) => {
+                  const expert = e.name;
+                  const state = e.risk_state;
                   const isOpen = expandedExpert === expert;
                   const stats = isOpen ? expertStats(expert) : null;
+                  const hasProb = typeof e.probability === 'number' && Number.isFinite(e.probability);
                   return (
                     <div key={expert} className="border-b border-zinc-800/50 last:border-0">
                       <button
@@ -212,9 +231,19 @@ export default function FileAnalysis() {
                             size={16}
                             className={`text-zinc-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}
                           />
-                          <span className="text-sm font-medium text-zinc-300 uppercase">{expert}</span>
+                          <span className="text-sm font-medium text-zinc-300">{e.label || expert}</span>
+                          {e.is_decision_expert && (
+                            <span className="text-[10px] uppercase tracking-wide text-zinc-500 border border-zinc-700 rounded px-1.5 py-0.5">
+                              decision
+                            </span>
+                          )}
                         </span>
-                        <RiskBadge state={state} />
+                        <span className="flex items-center gap-3">
+                          <span className="text-sm text-zinc-400 tabular-nums">
+                            {hasProb ? `${(e.probability * 100).toFixed(1)}%` : '—'}
+                          </span>
+                          <RiskBadge state={state} />
+                        </span>
                       </button>
 
                       {isOpen && (

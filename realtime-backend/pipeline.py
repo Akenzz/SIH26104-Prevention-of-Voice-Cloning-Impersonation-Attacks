@@ -34,6 +34,25 @@ class SessionConfig:
     binary_seq: bool = False
 
 
+@dataclass
+class WindowResult:
+    """Everything one scored window produced.
+
+    `expert_probabilities` is per-expert and each entry uses that expert's OWN
+    calibrator; `probability` is the decision probability from the fused/single
+    logit and is the only one the risk band is derived from.
+    """
+
+    risk_state: str
+    recommended_action: str
+    audio_quality: str | None
+    scores: dict[str, Score]
+    fused_logit: float | None
+    probability: float | None
+    quality: QualityResult
+    expert_probabilities: dict[str, float] = field(default_factory=dict)
+
+
 def process_single_window(
     window: np.ndarray,
     settings: Settings,
@@ -42,9 +61,10 @@ def process_single_window(
     calibrator: Calibrator,
     policy: PolicyConfig,
     windows_scored: int,
-    smoothed_probability: float | None = None, # If None, will use raw prob
+    smoothed_probability: float | None = None,  # If None, will use raw prob
     dropped_frames: bool = False,
-) -> tuple[str, str, str | None, dict[str, Score], float | None, float | None, QualityResult]:
+    expert_calibrators: dict[str, Calibrator] | None = None,
+) -> WindowResult:
     """Core logic to assess, score, fuse, calibrate, and decide on a single window."""
     quality = assess_window(
         window,
@@ -63,7 +83,7 @@ def process_single_window(
             smoothed_probability=smoothed_probability,
             config=policy,
         )
-        return state, action, flag, {}, None, None, quality
+        return WindowResult(state, action, flag, {}, None, None, quality)
 
     scores: dict[str, Score] = {}
     for name, expert in experts.items():
@@ -76,7 +96,14 @@ def process_single_window(
         single_expert=settings.single_expert,
     )
     probability = calibrator.probability(fused)
-    
+
+    # Each expert gets its own calibrator; falling back to the global one would
+    # read a foreign logit scale, so we only report what we can calibrate.
+    expert_probabilities: dict[str, float] = {}
+    for name, score in scores.items():
+        cal = (expert_calibrators or {}).get(name, calibrator)
+        expert_probabilities[name] = float(cal.probability(float(score["logit"])))
+
     # For single-shot (no smoothing), use the raw probability
     if smoothed_probability is None:
         smoothed_probability = probability
@@ -88,7 +115,10 @@ def process_single_window(
         smoothed_probability=smoothed_probability,
         config=policy,
     )
-    return state, action, flag, scores, fused, probability, quality
+    return WindowResult(
+        state, action, flag, scores, fused, probability, quality, expert_probabilities
+    )
+
 
 @dataclass
 class ConnectionState:
@@ -97,9 +127,11 @@ class ConnectionState:
     fusion: FusionConfig
     calibrator: Calibrator
     policy: PolicyConfig
+    expert_calibrators: dict[str, Calibrator] = field(default_factory=dict)
     session: SessionConfig | None = None
     buffer: RingBuffer | None = None
     ema: ExponentialMovingAverage = field(init=False)
+    expert_emas: dict[str, ExponentialMovingAverage] = field(init=False)
     out_seq: int = 0
     windows_scored: int = 0
     resample_warned: bool = False
@@ -107,6 +139,9 @@ class ConnectionState:
 
     def __post_init__(self) -> None:
         self.ema = ExponentialMovingAverage(self.settings.ema_alpha)
+        self.expert_emas = {
+            name: ExponentialMovingAverage(self.settings.ema_alpha) for name in self.experts
+        }
 
     def apply_start(self, payload: dict[str, Any]) -> dict[str, Any]:
         sample_rate = int(payload.get("sample_rate") or payload.get("sampleRate") or 0)
@@ -127,6 +162,8 @@ class ConnectionState:
         )
         self.buffer = RingBuffer(self.settings.window_samples, self.settings.hop_samples)
         self.ema.reset()
+        for e in self.expert_emas.values():
+            e.reset()
         self.out_seq = 0
         self.windows_scored = 0
         self.resample_warned = False
@@ -279,21 +316,9 @@ class ConnectionState:
         *,
         dropped_frames: bool,
     ) -> dict[str, Any]:
-        
-        # First we need the raw probability to update EMA. 
-        # But we need fusion to get the probability.
-        # We can run the core sequence, but we want to pass the updated EMA back to `decide`.
-        # Actually, `process_single_window` handles `decide`. So we run it once, 
-        # get the raw probability, update EMA, and if quality is ok, we'll want `decide` 
-        # with the EMA.
-        
-        # We can just do quality assessment here, or extract the fusion math.
-        # It's cleaner to let `process_single_window` do everything, but skip its `decide` 
-        # and do it here if we want EMA.
-        # Or modify `process_single_window` to accept a callback for smoothing?
-        # Let's simplify: `process_single_window` returns all intermediate values.
-        
-        state, action, flag, scores, fused, probability, quality = process_single_window(
+        # process_single_window decides with the RAW probability; we re-decide
+        # below with the EMA-smoothed one, which is what the contract reports.
+        result = process_single_window(
             window=window,
             settings=self.settings,
             experts=self.experts,
@@ -301,18 +326,26 @@ class ConnectionState:
             calibrator=self.calibrator,
             policy=self.policy,
             windows_scored=self.windows_scored + 1,
-            smoothed_probability=None, # pass None first, we'll re-decide if ok
-            dropped_frames=dropped_frames
+            smoothed_probability=None,
+            dropped_frames=dropped_frames,
+            expert_calibrators=self.expert_calibrators,
         )
-        
-        if not quality.ok:
+
+        if not result.quality.ok:
             return self._unavailable(
-                quality, t0, scores={}, fused=None, window_index=self.windows_scored
+                result.quality, t0, scores={}, fused=None, window_index=self.windows_scored
             )
 
-        smoothed = self.ema.update(probability)
+        smoothed = self.ema.update(result.probability)
         self.windows_scored += 1
-        
+
+        # Smooth each expert on its own track so the per-model cards are as
+        # stable as the headline number instead of jittering window to window.
+        expert_smoothed: dict[str, float] = {}
+        for name, prob in result.expert_probabilities.items():
+            ema = self.expert_emas.setdefault(name, ExponentialMovingAverage(self.settings.ema_alpha))
+            expert_smoothed[name] = float(ema.update(prob))
+
         state, action, flag = decide(
             quality_ok=True,
             quality_reason=None,
@@ -320,17 +353,18 @@ class ConnectionState:
             smoothed_probability=smoothed,
             config=self.policy,
         )
-        
+
         return self._emit(
             state=state,
             action=action,
             smoothed=smoothed,
-            fused=fused,
-            scores=scores,
+            fused=result.fused_logit,
+            scores=result.scores,
             dropped=False,
             audio_quality=flag,
             window_index=self.windows_scored,
             t0=t0,
+            expert_probabilities=expert_smoothed,
         )
 
     def _unavailable(
@@ -359,6 +393,7 @@ class ConnectionState:
             audio_quality=flag,
             window_index=window_index,
             t0=t0,
+            expert_probabilities={},
         )
 
     def _emit(
@@ -373,6 +408,7 @@ class ConnectionState:
         audio_quality: str | None,
         window_index: int,
         t0: float,
+        expert_probabilities: dict[str, float],
     ) -> dict[str, Any]:
         self.out_seq += 1
         latency_ms = (time.perf_counter() - t0) * 1000.0
@@ -391,6 +427,9 @@ class ConnectionState:
             audio_quality=audio_quality,
             window_index=window_index,
             latency_ms=latency_ms,
+            expert_probabilities=expert_probabilities,
+            expert_calibrators=self.expert_calibrators,
+            policy=self.policy,
         )
 
     def _error(self, detail: str) -> dict[str, Any]:
@@ -406,6 +445,7 @@ class ConnectionState:
             "smoothed_probability": None,
             "fused_logit": None,
             "raw_per_expert_scores": {},
+            "scores": {},
             "model_version": {},
             "threshold_version": self.policy.version,
             "calibrator_version": self.calibrator.version,

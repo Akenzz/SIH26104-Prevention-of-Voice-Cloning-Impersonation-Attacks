@@ -30,6 +30,22 @@ def load_policy(path: Path) -> PolicyConfig:
     )
 
 
+def band(probability: float | None, config: PolicyConfig) -> str:
+    """Risk band for a single probability, without the collecting/quality gates.
+
+    Used for the per-expert cards in the UI. The connection-level `decide` stays
+    the only source of the reported risk_state and recommended_action.
+    """
+    if probability is None:
+        return "unavailable"
+    p = float(probability)
+    if p < config.low_max:
+        return "low"
+    if p < config.uncertain_max:
+        return "uncertain"
+    return "high"
+
+
 def decide(
     *,
     quality_ok: bool,
