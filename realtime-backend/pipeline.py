@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from audio.quality import QualityResult, assess_window, decode_pcm
-from audio.resample import to_mono, to_target_rate
+from audio.resample import StreamingLinearResampler, to_mono
 from audio.ring_buffer import RingBuffer
 from calibration import Calibrator
 from config import Settings
@@ -51,6 +51,10 @@ def process_single_window(
         silence_rms=settings.silence_rms,
         clip_abs=settings.clip_abs,
         clip_fraction=settings.clip_fraction,
+        active_rms=settings.active_rms,
+        min_active_audio_sec=settings.min_active_audio_sec,
+        activity_frame_ms=settings.activity_frame_ms,
+        sample_rate=settings.target_sample_rate,
     )
     if dropped_frames:
         quality = QualityResult(False, "dropped_or_reordered")
@@ -99,6 +103,7 @@ class ConnectionState:
     policy: PolicyConfig
     session: SessionConfig | None = None
     buffer: RingBuffer | None = None
+    resampler: StreamingLinearResampler | None = None
     ema: ExponentialMovingAverage = field(init=False)
     out_seq: int = 0
     windows_scored: int = 0
@@ -126,6 +131,7 @@ class ConnectionState:
             binary_seq=binary_seq,
         )
         self.buffer = RingBuffer(self.settings.window_samples, self.settings.hop_samples)
+        self.resampler = StreamingLinearResampler(sample_rate, self.settings.target_sample_rate)
         self.ema.reset()
         self.out_seq = 0
         self.windows_scored = 0
@@ -164,6 +170,7 @@ class ConnectionState:
             frame = payload[4:]
             dropped = self._consume_client_seq(client_seq)
             if dropped:
+                self._reset_after_stream_discontinuity()
                 q = QualityResult(False, "dropped_or_reordered")
                 return [self._unavailable(q, t0, scores={}, fused=None, window_index=self.windows_scored)]
 
@@ -172,9 +179,10 @@ class ConnectionState:
             return [self._unavailable(decode_q, t0, scores={}, fused=None, window_index=self.windows_scored)]
         try:
             mono = to_mono(samples, self.session.channels)
-            resampled, did_resample = to_target_rate(
-                mono, self.session.sample_rate, self.settings.target_sample_rate
-            )
+            if self.resampler is None:
+                raise RuntimeError("streaming resampler was not initialized")
+            resampled = self.resampler.process(mono)
+            did_resample = self.resampler.did_resample
         except ValueError:
             q = QualityResult(False, "decode_failure")
             return [self._unavailable(q, t0, scores={}, fused=None, window_index=self.windows_scored)]
@@ -207,6 +215,7 @@ class ConnectionState:
         client_seq = payload.get("sequence_number", payload.get("seq"))
         dropped = self._consume_client_seq(client_seq if client_seq is None else int(client_seq))
         if dropped:
+            self._reset_after_stream_discontinuity()
             q = QualityResult(False, "dropped_or_reordered")
             return [self._unavailable(q, t0, scores={}, fused=None, window_index=self.windows_scored)]
 
@@ -237,9 +246,14 @@ class ConnectionState:
         try:
             mono = to_mono(samples, int(payload.get("channels") or self.session.channels))
             source_rate = int(payload.get("sample_rate") or self.session.sample_rate)
-            resampled, did_resample = to_target_rate(
-                mono, source_rate, self.settings.target_sample_rate
-            )
+            if source_rate != self.session.sample_rate:
+                raise ValueError(
+                    "sample_rate cannot change within a stream; send a new start message"
+                )
+            if self.resampler is None:
+                raise RuntimeError("streaming resampler was not initialized")
+            resampled = self.resampler.process(mono)
+            did_resample = self.resampler.did_resample
             if did_resample and not self.resample_warned:
                 self.resample_warned = True
                 logger.warning(
@@ -270,6 +284,15 @@ class ConnectionState:
             return True
         self.session.next_client_seq = client_seq + 1
         return False
+
+    def _reset_after_stream_discontinuity(self) -> None:
+        """Prevent a future window from joining audio from opposite sides of a gap."""
+        if self.buffer is not None:
+            self.buffer.reset()
+        if self.resampler is not None:
+            self.resampler.reset()
+        self.ema.reset()
+        self.windows_scored = 0
 
 
     def _score_window(

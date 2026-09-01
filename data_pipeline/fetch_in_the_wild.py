@@ -22,6 +22,20 @@ DEFAULT_AUDIO_ROOT = Path(os.environ.get("IN_THE_WILD_ROOT", r"E:\DatasetSIH\in_
 MANIFEST_DIR       = repo_root / "data_pipeline" / "manifests"
 HF_DATASET_ID      = "mueller91/In-The-Wild"
 
+
+def _normalise_label(value: object) -> str | None:
+    """Map source labels to the shared manifest contract.
+
+    Returning ``None`` is deliberate: an unknown label must block evaluation
+    rather than quietly becoming spoof and invalidating the benchmark.
+    """
+    label = str(value).strip().lower()
+    if label in {"real", "bonafide", "bona-fide", "genuine", "0", "false", "no"}:
+        return "bonafide"
+    if label in {"spoof", "fake", "synthetic", "deepfake", "1", "true", "yes"}:
+        return "spoof"
+    return None
+
 def download_and_build_manifest(audio_root: Path) -> Path:
     audio_root.mkdir(parents=True, exist_ok=True)
     MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
@@ -82,7 +96,9 @@ def download_and_build_manifest(audio_root: Path) -> Path:
     else:
         print(f"      [WARN] No zip files found in snapshot! Trying to scan for raw wavs...")
 
-    all_wavs = list(audio_root.rglob("*.wav")) + list(snapshot_path.rglob("*.wav"))
+    # A file can be visible both under the extracted audio root and the Hub
+    # snapshot.  Deduplicate it before constructing the benchmark manifest.
+    all_wavs = sorted({p.resolve() for p in audio_root.rglob("*.wav")} | {p.resolve() for p in snapshot_path.rglob("*.wav")})
     all_csvs = list(audio_root.rglob("*.csv")) + list(snapshot_path.rglob("*.csv"))
     
     if not all_wavs:
@@ -130,7 +146,14 @@ def download_and_build_manifest(audio_root: Path) -> Path:
                     "speaker": str(row[spk_col]) if spk_col else "unknown",
                 }
 
+    if not meta_dict:
+        raise ValueError(
+            "No usable file-to-label metadata was found. Refusing to create an "
+            "evaluation manifest with assumed spoof labels."
+        )
+
     rows = []
+    unknown_labels = []
     i = 0
     try:
         import soundfile as sf
@@ -141,8 +164,10 @@ def download_and_build_manifest(audio_root: Path) -> Path:
         stem = wav_path.stem
         meta = meta_dict.get(stem, {})
         
-        raw_label = str(meta.get("label", "spoof")).strip().lower()
-        label  = "bonafide" if raw_label in ("real", "bonafide", "genuine", "0", "false") else "spoof"
+        label = _normalise_label(meta.get("label"))
+        if label is None:
+            unknown_labels.append((wav_path.name, meta.get("label")))
+            continue
         gen_id = str(meta.get("generator", "unknown"))
         if label == "bonafide":
             gen_id = "none"
@@ -183,9 +208,14 @@ def download_and_build_manifest(audio_root: Path) -> Path:
         if i % 1000 == 0:
             print(f"  [{i:>6} done]  samples={len(rows):,}", flush=True)
 
+    if unknown_labels:
+        example = ", ".join(f"{name}={label!r}" for name, label in unknown_labels[:5])
+        raise ValueError(
+            f"Could not verify labels for {len(unknown_labels)} audio files ({example}). "
+            "Fix the metadata mapping before using this dataset for evaluation."
+        )
     if not rows:
-        print("[FAIL] 0 rows extracted.")
-        sys.exit(1)
+        raise ValueError("0 labelled rows extracted from In-The-Wild.")
 
     df_csv = pd.DataFrame(rows, columns=REQUIRED_COLUMNS)
     csv_path = MANIFEST_DIR / "in_the_wild_eval_ood.csv"
@@ -202,6 +232,12 @@ def validate_manifest(csv_path: Path) -> None:
             print(f"  {e}")
     else:
         gens = df["generator_id"].nunique()
+        labels = set(df["label"])
+        if labels != {"bonafide", "spoof"}:
+            raise ValueError(
+                "In-The-Wild evaluation must contain both bonafide and spoof "
+                f"examples; found {sorted(labels)}."
+            )
         print(f"  [PASS] In-The-Wild schema valid! ({len(df):,} rows, {gens} TTS systems)")
 
 def main():

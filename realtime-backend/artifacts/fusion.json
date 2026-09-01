@@ -1,6 +1,9 @@
 {
   "version": "fusion-identity-v0",
   "mode_note": "Offline eval must justify fused mode. Until then FUSION_MODE=single.",
+  "scope": {
+    "fitted": false
+  },
   "bias": 0.0,
   "weights": {
     "dummy": 1.0,

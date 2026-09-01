@@ -1,6 +1,13 @@
 {
   "version": "platt_v2_combined_dataset",
   "kind": "platt_sklearn",
+  "scope": {
+    "experts": ["wavlm"],
+    "fusion_mode": "single",
+    "target_sample_rate": 16000,
+    "window_sec": 4.0,
+    "preprocessing_version": "unified-v2-legacy"
+  },
   "metadata": {
     "checkpoint": "/home/akenzz/sih/project/wavlm-base-plus/checkpoints/best_model_unified.pt",
     "manifest": "/home/akenzz/sih/project/data_pipeline/manifests/unified_manifest_final.csv",

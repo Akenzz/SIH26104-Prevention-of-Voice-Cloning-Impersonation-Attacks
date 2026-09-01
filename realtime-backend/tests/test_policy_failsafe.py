@@ -80,6 +80,9 @@ def test_out_of_order_json_frames_are_unavailable():
     assert gap[0]["dropped_frames"] is True
     assert gap[0]["audio_quality"] == "dropped_or_reordered"
     assert gap[0]["smoothed_probability"] is None
+    assert state.windows_scored == 0
+    assert state.buffer is not None and len(state.buffer) == 0
+    assert state.ema.value is None
 
 
 def test_binary_seq_gap_is_unavailable():
@@ -94,6 +97,7 @@ def test_binary_seq_gap_is_unavailable():
     assert messages[0]["risk_state"] == "unavailable"
     assert messages[0]["dropped_frames"] is True
     assert messages[0]["audio_quality"] == "dropped_or_reordered"
+    assert state.buffer is not None and len(state.buffer) == 0
 
 
 def test_healthy_audio_streams_increasing_sequence_numbers():

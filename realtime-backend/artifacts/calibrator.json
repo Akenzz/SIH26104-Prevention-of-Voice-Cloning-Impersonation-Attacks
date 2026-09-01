@@ -1,6 +1,13 @@
 {
   "version": "platt-lfcc-asvspoof19dev-v1",
   "kind": "platt",
+  "scope": {
+    "experts": ["lfcc"],
+    "fusion_mode": "single",
+    "target_sample_rate": 16000,
+    "window_sec": 4.0,
+    "preprocessing_version": "asvspoof19-lfcc-v1"
+  },
   "a": 1.321248982453757,
   "b": -0.5199802458132765,
   "note": "Platt fit for expert 'lfcc' (best_lfcc_lcnn) on asvspoof19_dev.csv split=dev; fit on 2400 windows, 600 held out for eval (total spoof=1500, bonafide=1500), class-balanced so the dataset prior is not baked in (policy bands set the operating point). Refit if the expert, the calibration corpus, or the fusion output changes; validity depends on the fit corpus matching the deployment distribution.",

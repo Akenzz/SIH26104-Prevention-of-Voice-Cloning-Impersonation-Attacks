@@ -1,10 +1,81 @@
 from __future__ import annotations
 
 import logging
+import math
 
 import numpy as np
 
 logger = logging.getLogger("realtime_backend.audio")
+
+
+class StreamingLinearResampler:
+    """Stateful mono resampler for PCM frames from a single connection.
+
+    ``to_target_rate`` is suitable for a complete file.  Applying it to every
+    128-sample browser frame independently, however, rounds each frame's output
+    length and resets its interpolation phase.  That creates sample-rate drift
+    and discontinuities before the detector sees the audio.  This class keeps
+    the fractional source position across calls, so chunked and continuous
+    streams produce the same samples (apart from the unavoidable final sample
+    held until the next frame).
+
+    The interpolation method is intentionally kept compatible with the legacy
+    helper.  It is an integrity fix, not a claim that linear interpolation is a
+    replacement for a production polyphase resampler.
+    """
+
+    def __init__(self, source_rate: int, target_rate: int):
+        if source_rate <= 0 or target_rate <= 0:
+            raise ValueError(f"invalid sample rates source={source_rate} target={target_rate}")
+        self.source_rate = int(source_rate)
+        self.target_rate = int(target_rate)
+        self._step = self.source_rate / float(self.target_rate)
+        self.reset()
+
+    @property
+    def did_resample(self) -> bool:
+        return self.source_rate != self.target_rate
+
+    def reset(self) -> None:
+        self._buffer = np.empty(0, dtype=np.float32)
+        self._buffer_start = 0
+        self._input_samples_seen = 0
+        self._next_position = 0.0
+
+    def process(self, samples: np.ndarray) -> np.ndarray:
+        audio = np.asarray(samples, dtype=np.float32).reshape(-1)
+        if not self.did_resample or audio.size == 0:
+            return audio
+        if not np.isfinite(audio).all():
+            raise ValueError("audio contains non-finite samples")
+
+        if self._buffer.size == 0:
+            self._buffer_start = self._input_samples_seen
+        self._buffer = np.concatenate((self._buffer, audio))
+        self._input_samples_seen += int(audio.size)
+
+        last_available = self._buffer_start + self._buffer.size - 1
+        output: list[float] = []
+        # We need a sample on each side of a non-integer position.  Holding one
+        # frame-edge sample avoids seams without synthesising future audio.
+        while self._next_position < last_available:
+            left = int(math.floor(self._next_position))
+            fraction = self._next_position - left
+            offset = left - self._buffer_start
+            y0 = float(self._buffer[offset])
+            y1 = float(self._buffer[offset + 1])
+            output.append(y0 + fraction * (y1 - y0))
+            self._next_position += self._step
+
+        # Retain the sample immediately before the next fractional position; it
+        # is needed to interpolate against the next incoming frame.
+        keep_from = max(self._buffer_start, int(math.floor(self._next_position)) - 1)
+        discard = keep_from - self._buffer_start
+        if discard > 0:
+            self._buffer = self._buffer[discard:]
+            self._buffer_start = keep_from
+
+        return np.asarray(output, dtype=np.float32)
 
 
 def to_mono(samples: np.ndarray, channels: int) -> np.ndarray:

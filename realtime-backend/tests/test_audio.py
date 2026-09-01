@@ -70,3 +70,19 @@ def test_silence_and_clip_fail_quality():
     ok = np.random.default_rng(0).normal(0, 0.1, 64000).astype(np.float32)
     q3 = assess_window(ok, silence_rms=1e-4, clip_abs=0.99, clip_fraction=0.01)
     assert q3.ok is True
+
+
+def test_short_active_audio_is_not_scored_as_a_full_window():
+    window = np.zeros(64_000, dtype=np.float32)
+    window[: int(0.6 * 16_000)] = 0.1
+    q = assess_window(
+        window,
+        silence_rms=1e-4,
+        clip_abs=0.99,
+        clip_fraction=0.01,
+        active_rms=0.003,
+        min_active_audio_sec=1.0,
+        sample_rate=16_000,
+    )
+    assert q.ok is False
+    assert q.reason == "insufficient_active_audio"

@@ -19,6 +19,7 @@ class FusionConfig:
     version: str
     bias: float
     weights: dict[str, float]
+    scope: dict[str, object] | None = None
 
 
 def load_fusion(path: Path) -> FusionConfig:
@@ -28,6 +29,7 @@ def load_fusion(path: Path) -> FusionConfig:
         version=str(data.get("version", "fusion-unversioned")),
         bias=float(data.get("bias", 0.0)),
         weights=weights,
+        scope=data.get("scope"),
     )
 
 

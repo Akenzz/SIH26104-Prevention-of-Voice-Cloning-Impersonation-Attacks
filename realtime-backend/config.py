@@ -46,7 +46,9 @@ class Settings:
     target_sample_rate: int = TARGET_SAMPLE_RATE
     window_sec: float = WINDOW_SEC
     hop_sec: float = HOP_SEC
-    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "dummy"))
+    # A real detector is the safe default.  Dummy scoring remains available for
+    # local protocol work only through the explicit ALLOW_DUMMY=1 opt-in.
+    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm"))
     fusion_mode: str = os.environ.get("FUSION_MODE", "single")
     single_expert: str = os.environ.get("SINGLE_EXPERT", "")
     ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.3"))
@@ -58,9 +60,13 @@ class Settings:
     policy_path: Path = Path(os.environ.get("POLICY_PATH", str(ARTIFACTS_DIR / "policy.json")))
     model_cache_dir: Path = MODEL_CACHE_DIR
     silence_rms: float = float(os.environ.get("SILENCE_RMS", "1e-4"))
+    active_rms: float = float(os.environ.get("ACTIVE_RMS", "0.003"))
+    min_active_audio_sec: float = float(os.environ.get("MIN_ACTIVE_AUDIO_SEC", "1.0"))
+    activity_frame_ms: int = int(os.environ.get("ACTIVITY_FRAME_MS", "30"))
     clip_abs: float = float(os.environ.get("CLIP_ABS", "0.99"))
     clip_fraction: float = float(os.environ.get("CLIP_FRACTION", "0.01"))
     prefetch_models: bool = os.environ.get("PREFETCH_MODELS", "0") == "1"
+    allow_dummy: bool = os.environ.get("ALLOW_DUMMY", "0") == "1"
 
     @property
     def window_samples(self) -> int:

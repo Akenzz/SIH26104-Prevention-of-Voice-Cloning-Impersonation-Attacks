@@ -22,7 +22,7 @@ This is **not** identity verification, **not** the dashboard (task E), and **not
 | Fail-safe: silence / clip / decode / seq gap → `unavailable` | done + tested |
 | WAV client, soak (memory + p95 latency) | done |
 
-Default `EXPERTS=dummy`. **`EXPERTS=wavlm` now runs the real WavLM detector** — it loads `expert1/checkpoints/best_model.pt` (produced by `expert1/train.py`) directly from the repo, or falls back to downloading from `Akenzz/Expert-1` on the Hub. The adapter imports `WavLMClassifier` from the `expert1` package, loads the `model_state_dict` with `strict=True`, and runs inference with fp16 autocast for ~2× GPU throughput. The 768-dim mean-pooled embedding and a single spoof logit are returned on every window. **`EXPERTS=lfcc`** runs the LFCC-LCNN detector (see existing docs). The calibrator is a **Platt fit on ASVspoof2019 LA dev** — see the cross-corpus caveat below.
+Default `EXPERTS=wavlm`; the service validates that the selected expert, window, sample rate, and fusion mode match the calibrator artifact before it starts. `EXPERTS=dummy` is restricted to local protocol work and requires `ALLOW_DUMMY=1`; health reports it as `degraded`. **`EXPERTS=wavlm` runs the real WavLM detector** — it loads `wavlm-base-plus/checkpoints/best_model_unified.pt` locally or falls back to downloading from `Akenzz/Expert-1` on the Hub. **`EXPERTS=lfcc`** runs the LFCC-LCNN detector, but requires the LFCC-specific calibrator artifact. Fusion remains disabled until a fitted fusion artifact is supplied.
 
 ## Layout
 
@@ -261,7 +261,8 @@ Silence, clipping, decode failure, or a sequence gap **never** produce `low`. Th
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `EXPERTS` | `dummy` | Comma list: `dummy`, `wavlm`, `lfcc` |
+| `EXPERTS` | `wavlm` | Comma list: `wavlm`, `lfcc`; `dummy` requires `ALLOW_DUMMY=1` |
+| `ALLOW_DUMMY` | `0` | Set `1` only for local WebSocket/protocol development; health becomes `degraded` |
 | `FUSION_MODE` | `single` | `single` or `fused` |
 | `SINGLE_EXPERT` | first loaded | Which expert when mode is `single` |
 | `WINDOW_SEC` | `4.0` | Window length |
@@ -271,6 +272,7 @@ Silence, clipping, decode failure, or a sequence gap **never** produce `low`. Th
 | `MODEL_CACHE_DIR` | `./model_cache` | Hub downloads |
 | `PREFETCH_MODELS` | `0` | `1` = download both Hub files at startup |
 | `SILENCE_RMS` | `1e-4` | Below this → `unavailable` / silence |
+| `ACTIVE_RMS` / `MIN_ACTIVE_AUDIO_SEC` | `0.003` / `1.0` | Require enough energetic audio before authenticity scoring |
 | `CLIP_ABS` / `CLIP_FRACTION` | `0.99` / `0.01` | Clipping gate |
 
 Fusion / calibrator / policy math is **not** hardcoded. Replace:

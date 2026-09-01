@@ -21,6 +21,7 @@ from experts.loader import load_experts, prefetch_hub_files
 from fusion import load_fusion
 from pipeline import ConnectionState, process_single_window
 from policy import load_policy
+from runtime_contract import validate_runtime_contract
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,6 +39,9 @@ policy = load_policy(settings.policy_path)
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global experts
+    # Verify model/artifact compatibility before downloads or model startup so a
+    # configuration error cannot accidentally produce plausible-looking scores.
+    validate_runtime_contract(settings, calibrator, fusion)
     settings.model_cache_dir.mkdir(parents=True, exist_ok=True)
     if settings.prefetch_models:
         logger.info("PREFETCH_MODELS=1: downloading Hub checkpoints into %s", settings.model_cache_dir)
@@ -61,10 +65,12 @@ app.add_middleware(
 
 @app.get("/health")
 def health() -> JSONResponse:
+    loaded_experts = list(experts) or settings.experts
+    is_dummy = any(name == "dummy" for name in loaded_experts)
     return JSONResponse(
         {
-            "status": "ok",
-            "experts": list(experts) or settings.experts,
+            "status": "degraded" if is_dummy else "ok",
+            "experts": loaded_experts,
             "fusion_mode": settings.fusion_mode,
             "window_sec": settings.window_sec,
             "hop_sec": settings.hop_sec,

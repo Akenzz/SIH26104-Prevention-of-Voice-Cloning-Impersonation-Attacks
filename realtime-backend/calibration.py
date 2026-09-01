@@ -28,6 +28,7 @@ class Calibrator:
     kind: str
     a: float
     b: float
+    scope: dict[str, Any] | None = None
 
     def probability(self, logit: float) -> float:
         if self.kind in {"identity_sigmoid", "platt"}:
@@ -47,18 +48,20 @@ def load_calibrator(path: Path) -> Calibrator | Any:
         model = joblib.load(joblib_path)
         
         class SklearnCalibrator:
-            def __init__(self, model, version):
+            def __init__(self, model, version, scope):
                 self.model = model
                 self.version = version
+                self.scope = scope
                 
             def probability(self, logit: float) -> float:
                 return float(self.model.predict_proba(np.array([[float(logit)]]))[0, 1])
                 
-        return SklearnCalibrator(model, version)
+        return SklearnCalibrator(model, version, data.get("scope"))
 
     return Calibrator(
         version=version,
         kind=kind,
         a=float(data.get("a", 1.0)),
         b=float(data.get("b", 0.0)),
+        scope=data.get("scope"),
     )
