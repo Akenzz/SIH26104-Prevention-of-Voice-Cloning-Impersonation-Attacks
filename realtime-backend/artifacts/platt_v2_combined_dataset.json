@@ -1,0 +1,13 @@
+{
+  "version": "platt_v2_combined_dataset",
+  "kind": "platt_sklearn",
+  "metadata": {
+    "checkpoint": "/home/akenzz/sih/project/wavlm-base-plus/checkpoints/best_model_unified.pt",
+    "manifest": "/home/akenzz/sih/project/data_pipeline/manifests/unified_manifest_final.csv",
+    "split": "dev",
+    "dev_size": 5378,
+    "n_bonafide": 3518,
+    "n_spoof": 1860,
+    "fitted_utc": "2026-09-01T14:02:07.935572+00:00"
+  }
+}
