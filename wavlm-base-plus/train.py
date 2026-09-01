@@ -24,14 +24,13 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from expert1.dataset import SpeechDataset, WINDOW_SAMPLES
-from expert1.model import WavLMClassifier
+from .dataset import SpeechDataset, WINDOW_SAMPLES
+from .model import WavLMClassifier
 
 # ─── Hyperparameters / paths (edit these or pass via CLI) ─────────────────────
 # TODO: Change MANIFEST_CSV to point at your real dataset manifest.
-# Paths are relative to the project root (where you run `python -m expert1.train`).
-MANIFEST_CSV    = "expert1/data/manifest.csv"
-CHECKPOINT_PATH = "expert1/checkpoints/best_model.pt"
+MANIFEST_CSV    = "wavlm-base-plus/data/manifest.csv"
+CHECKPOINT_PATH = "wavlm-base-plus/checkpoints/best_model_v2.pt"
 BATCH_SIZE      = 8
 NUM_EPOCHS      = 10
 LEARNING_RATE   = 1e-3      # Head-only learning rate
@@ -79,12 +78,18 @@ def train_one_epoch(model, loader, optimizer, criterion, device, epoch, total_ep
 
 @torch.no_grad()
 def evaluate(model, loader, criterion, device):
-    """Evaluate on a data split. Returns (mean_loss, accuracy)."""
+    """Evaluate on a data split. Returns (mean_loss, accuracy, eer)."""
+    from sklearn.metrics import roc_curve
+    import numpy as np
+
     model.eval()
 
     total_loss    = 0.0
     total_items   = 0
     total_correct = 0
+    
+    all_labels = []
+    all_logits = []
 
     pbar = tqdm(loader, desc="              [dev]  ", unit="batch", leave=False, dynamic_ncols=True)
     for waveform, labels in pbar:
@@ -98,10 +103,22 @@ def evaluate(model, loader, criterion, device):
         total_correct += (preds == labels).sum().item()
         total_loss    += loss.item() * len(labels)
         total_items   += len(labels)
+        
+        all_labels.append(labels.cpu().numpy())
+        all_logits.append(logits.cpu().numpy())
 
     mean_loss = total_loss / total_items
     accuracy  = total_correct / total_items
-    return mean_loss, accuracy
+    
+    # Compute EER
+    all_labels_arr = np.concatenate(all_labels)
+    all_logits_arr = np.concatenate(all_logits)
+    fpr, tpr, thresholds = roc_curve(all_labels_arr, all_logits_arr, pos_label=1)
+    fnr = 1.0 - tpr
+    eer_idx = np.argmin(np.abs(fpr - fnr))
+    eer = float((fpr[eer_idx] + fnr[eer_idx]) / 2.0)
+
+    return mean_loss, accuracy, eer
 
 
 def main(args):
@@ -113,7 +130,8 @@ def main(args):
     # ── Data ──────────────────────────────────────────────────────────────────
     print("[train] Loading datasets ...")
     train_ds = SpeechDataset(args.manifest, split="train")
-    dev_ds   = SpeechDataset(args.manifest, split="dev")
+    dev_manifest = args.dev_manifest if args.dev_manifest else args.manifest
+    dev_ds   = SpeechDataset(dev_manifest, split="dev")
 
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,
@@ -143,22 +161,40 @@ def main(args):
     if ckpt_dir:
         os.makedirs(ckpt_dir, exist_ok=True)
 
-    # ── Training loop ─────────────────────────────────────────────────────────
-    best_dev_loss = float("inf")
-    print("\n" + "─" * 60)
-    print(f"{'Epoch':>5}  {'Train Loss':>10}  {'Dev Loss':>9}  {'Dev Acc':>8}")
-    print("─" * 60)
+    # ── Resume Logic ───────────────────────────────────────────────────────────
+    start_epoch = 1
+    best_dev_eer = float("inf")
+    
+    if args.resume and os.path.exists(args.checkpoint):
+        print(f"\n[train] Resuming from checkpoint: {args.checkpoint}")
+        state = torch.load(args.checkpoint, map_location=device)
+        if "model_state_dict" in state:
+            model.load_state_dict(state["model_state_dict"])
+            optimizer.load_state_dict(state["optimizer_state_dict"])
+            last_epoch = state.get("epoch", 0)
+            start_epoch = last_epoch + 1
+            best_dev_eer = state.get("dev_eer", float("inf"))
+            dev_loss = state.get("dev_loss", 0.0)
+            print(f"         ✓ Restored from Epoch {last_epoch} (dev_eer={best_dev_eer:.2%}, dev_loss={dev_loss:.4f})")
+        else:
+            print("         ⚠ Checkpoint is old format, loading weights only. Starting from Epoch 1.")
+            model.load_state_dict(state)
 
-    for epoch in range(1, args.epochs + 1):
+    # ── Training loop ─────────────────────────────────────────────────────────
+    print("\n" + "─" * 72)
+    print(f"{'Epoch':>5}  {'Train Loss':>10}  {'Dev Loss':>9}  {'Dev Acc':>8}  {'Dev EER':>9}")
+    print("─" * 72)
+
+    for epoch in range(start_epoch, args.epochs + 1):
         train_loss        = train_one_epoch(
             model, train_loader, optimizer, criterion, device, epoch, args.epochs
         )
-        dev_loss, dev_acc = evaluate(model, dev_loader, criterion, device)
+        dev_loss, dev_acc, dev_eer = evaluate(model, dev_loader, criterion, device)
 
-        print(f"{epoch:>5}  {train_loss:>10.4f}  {dev_loss:>9.4f}  {dev_acc:>7.1%}")
+        print(f"{epoch:>5}  {train_loss:>10.4f}  {dev_loss:>9.4f}  {dev_acc:>7.1%}  {dev_eer:>8.2%}")
 
-        if dev_loss < best_dev_loss:
-            best_dev_loss = dev_loss
+        if dev_eer < best_dev_eer:
+            best_dev_eer = dev_eer
             torch.save(
                 {
                     "epoch"            : epoch,
@@ -166,13 +202,14 @@ def main(args):
                     "optimizer_state_dict": optimizer.state_dict(),
                     "dev_loss"         : dev_loss,
                     "dev_acc"          : dev_acc,
+                    "dev_eer"          : dev_eer,
                 },
                 args.checkpoint,
             )
-            print(f"         ✓ Saved best checkpoint (dev_loss={dev_loss:.4f})")
+            print(f"         ✓ Saved best checkpoint (dev_eer={dev_eer:.2%}, dev_loss={dev_loss:.4f})")
 
-    print("─" * 60)
-    print(f"\n[train] Done. Best dev loss: {best_dev_loss:.4f}")
+    print("─" * 72)
+    print(f"\n[train] Done. Best dev EER: {best_dev_eer:.2%}")
     print(f"[train] Checkpoint saved to: {args.checkpoint}")
 
 
@@ -183,7 +220,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--manifest", default=MANIFEST_CSV,
         help="Path to manifest CSV  [default: %(default)s]"
-        # TODO: Pass --manifest /path/to/real_manifest.csv to use your real data
+    )
+    parser.add_argument(
+        "--dev-manifest", default=None,
+        help="Path to a separate dev manifest CSV (if your train and dev splits are in separate files)"
     )
     parser.add_argument(
         "--checkpoint", default=CHECKPOINT_PATH,
@@ -192,5 +232,6 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("--epochs",     type=int, default=NUM_EPOCHS)
     parser.add_argument("--lr",         type=float, default=LEARNING_RATE)
+    parser.add_argument("--resume",     action="store_true", help="Resume training from the checkpoint")
 
     main(parser.parse_args())

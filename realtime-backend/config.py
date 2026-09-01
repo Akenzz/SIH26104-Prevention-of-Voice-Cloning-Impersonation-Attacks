@@ -88,7 +88,7 @@ class Settings:
     device: str = os.environ.get("DEVICE", "cpu")
     fusion_path: Path = Path(os.environ.get("FUSION_PATH", str(ARTIFACTS_DIR / "fusion.json")))
     calibrator_path: Path = Path(
-        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "calibrator.json"))
+        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "platt_v2_combined_dataset.json"))
     )
     policy_path: Path = Path(os.environ.get("POLICY_PATH", str(ARTIFACTS_DIR / "policy.json")))
     model_cache_dir: Path = MODEL_CACHE_DIR

@@ -11,6 +11,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 def _sigmoid(x: float) -> float:
@@ -34,11 +35,30 @@ class Calibrator:
         raise ValueError(f"unsupported calibrator kind {self.kind!r}")
 
 
-def load_calibrator(path: Path) -> Calibrator:
+def load_calibrator(path: Path) -> Calibrator | Any:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
+    kind = str(data.get("kind", "identity_sigmoid"))
+    version = str(data.get("version", "calibrator-unversioned"))
+    
+    if kind == "platt_sklearn":
+        import joblib
+        import numpy as np
+        joblib_path = Path(path).with_suffix(".joblib")
+        model = joblib.load(joblib_path)
+        
+        class SklearnCalibrator:
+            def __init__(self, model, version):
+                self.model = model
+                self.version = version
+                
+            def probability(self, logit: float) -> float:
+                return float(self.model.predict_proba(np.array([[float(logit)]]))[0, 1])
+                
+        return SklearnCalibrator(model, version)
+
     return Calibrator(
-        version=str(data.get("version", "calibrator-unversioned")),
-        kind=str(data.get("kind", "identity_sigmoid")),
+        version=version,
+        kind=kind,
         a=float(data.get("a", 1.0)),
         b=float(data.get("b", 0.0)),
     )

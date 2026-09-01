@@ -37,12 +37,12 @@ logger = logging.getLogger("realtime_backend.experts")
 _WINDOW_SAMPLES = int(WINDOW_SEC * TARGET_SAMPLE_RATE)   # 64 000 for 4 s @ 16 kHz
 
 # Local checkpoint produced by training — no Hub upload needed.
-# wavlm-base-plus/checkpoints/best_model.pt is the real trained file.
+# wavlm-base-plus/checkpoints/best_model_unified.pt is the real trained file.
 _LOCAL_CHECKPOINT = (
     Path(__file__).resolve().parent.parent.parent   # repo root
     / "wavlm-base-plus"
     / "checkpoints"
-    / "best_model.pt"
+    / "best_model_unified.pt"
 )
 
 
