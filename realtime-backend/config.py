@@ -14,6 +14,28 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 ARTIFACTS_DIR = ROOT / "artifacts"
+
+
+def _load_dotenv(path: Path) -> None:
+    """Read KEY=VALUE lines from realtime-backend/.env into os.environ.
+
+    Zero-dependency and optional: the file is gitignored and only used to keep
+    local secrets (GROQ_API_KEY) out of shell history and out of the repo. Real
+    environment variables always win, so this never overrides an explicit
+    `GROQ_API_KEY=... python server.py`.
+    """
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
+_load_dotenv(ROOT / ".env")
+
 MODEL_CACHE_DIR = Path(os.environ.get("MODEL_CACHE_DIR", str(ROOT / "model_cache")))
 
 TARGET_SAMPLE_RATE = 16000
@@ -99,6 +121,21 @@ class Settings:
     clip_abs: float = float(os.environ.get("CLIP_ABS", "0.99"))
     clip_fraction: float = float(os.environ.get("CLIP_FRACTION", "0.01"))
     prefetch_models: bool = os.environ.get("PREFETCH_MODELS", "0") == "1"
+    # Task F narration (optional). When GROQ_API_KEY is unset the /narrate
+    # endpoint serves 503 and the frontend uses its local template narrator, so
+    # the demo runs fully offline. Setting a key turns on LLM rephrasing.
+    #
+    # Default model is groq/compound-mini: of the chat models Groq currently
+    # serves it was the only one that returned a clean one-liner. qwen3.6 leaks
+    # <think> chain-of-thought into the content, and openai/gpt-oss-* spend the
+    # whole token budget on hidden reasoning and return empty content. Override
+    # with GROQ_MODEL if your account has something better (e.g. a llama).
+    groq_api_key: str = os.environ.get("GROQ_API_KEY", "")
+    groq_model: str = os.environ.get("GROQ_MODEL", "groq/compound-mini")
+
+    @property
+    def narration_enabled(self) -> bool:
+        return bool(self.groq_api_key)
 
     @property
     def window_samples(self) -> int:

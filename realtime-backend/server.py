@@ -8,8 +8,8 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import io
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import soundfile as sf
@@ -19,6 +19,7 @@ from calibration import load_calibrator, load_expert_calibrators
 from config import EXPERT_CALIBRATORS, EXPERT_LABELS, load_settings
 from experts.loader import load_experts, prefetch_hub_files
 from fusion import load_fusion
+from narration import sanitize, stream_groq
 from pipeline import ConnectionState, process_single_window
 from policy import band, load_policy
 
@@ -90,6 +91,11 @@ def health() -> JSONResponse:
             "threshold_version": policy.version,
             "calibrator_version": calibrator.version,
             "fusion_version": fusion.version,
+            # Task F: whether the optional LLM narration path is live this run.
+            "narration": {
+                "enabled": settings.narration_enabled,
+                "model": settings.groq_model,
+            },
         }
     )
 
@@ -250,6 +256,43 @@ async def predict_file(file: UploadFile = File(...)):
         "fusion_version": fusion.version,
         "audio_quality": final_quality_flag
     })
+
+
+@app.post("/narrate")
+async def narrate(request: Request):
+    """Task F: stream a one-line LLM narration of one window's numbers as SSE.
+
+    Returns 503 when no GROQ_API_KEY is configured — the frontend then uses its
+    local template narrator. On any upstream error mid-stream we emit an `error`
+    SSE event and close, and the frontend falls back to local for that line.
+    Only the allowlisted fields (see narration.sanitize) are ever forwarded.
+    """
+    if not settings.narration_enabled:
+        return JSONResponse(
+            {"detail": "narration disabled: no GROQ_API_KEY"}, status_code=503
+        )
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "invalid JSON"}, status_code=400)
+    fields = sanitize(payload if isinstance(payload, dict) else {})
+
+    async def event_stream():
+        try:
+            async for delta in stream_groq(
+                fields, api_key=settings.groq_api_key, model=settings.groq_model
+            ):
+                yield f"data: {json.dumps({'delta': delta})}\n\n"
+            yield "event: done\ndata: {}\n\n"
+        except Exception as exc:  # network / upstream / auth / missing httpx
+            logger.warning("narration upstream failed: %s", exc)
+            yield f"event: error\ndata: {json.dumps({'detail': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.websocket("/ws")

@@ -4,6 +4,9 @@ import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { Badge, RiskBadge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { narrate, verdictLine } from '../lib/narrator';
+import { narrateRemote } from '../lib/narrateRemote';
+import ReasoningLog from '../components/panels/ReasoningLog';
 
 // Inline AudioWorklet processor to capture PCM f32le frames
 const workletCode = `
@@ -30,8 +33,16 @@ export default function LiveMonitor() {
   const [currentState, setCurrentState] = useState(null);
   const [currentProb, setCurrentProb] = useState(0);
   const [latestData, setLatestData] = useState(null);
+  const [reasoning, setReasoning] = useState([]);
 
   const wsRef = useRef(null);
+  // Task F narration bookkeeping: the narrator is stateful (it only speaks on a
+  // change), so we keep the previous and last score message; a monotonic id per
+  // log line; and whether the backend LLM narration path is live this session.
+  const prevMsgRef = useRef(null);
+  const lastMsgRef = useRef(null);
+  const lineIdRef = useRef(0);
+  const narrationEnabledRef = useRef(false);
   const audioContextRef = useRef(null);
   const workletNodeRef = useRef(null);
   const mediaStreamRef = useRef(null);
@@ -62,6 +73,18 @@ export default function LiveMonitor() {
         setStatus('connected');
         setIsRecording(true);
         setScores([]);
+        setReasoning([]);
+        prevMsgRef.current = null;
+        lastMsgRef.current = null;
+
+        // Ask the backend whether the optional Groq narration path is live. If
+        // not (no GROQ_API_KEY), we silently use the local template narrator.
+        try {
+          const h = await fetch('/health').then((r) => r.json());
+          narrationEnabledRef.current = !!h?.narration?.enabled;
+        } catch {
+          narrationEnabledRef.current = false;
+        }
 
         // Send start message
         ws.send(JSON.stringify({
@@ -153,11 +176,54 @@ export default function LiveMonitor() {
           setCurrentState(data.risk_state);
           setCurrentProb(data.smoothed_probability);
           setLatestData(data);
+
+          // Task F: narrate the change, if any. The local narrator is both the
+          // event gate AND the offline fallback; the LLM only rephrases the same
+          // grounded fields when enabled, so it adds no new hallucination surface.
+          const prev = prevMsgRef.current;
+          const local = narrate(prev, data);
+          prevMsgRef.current = data;
+          lastMsgRef.current = data;
+          if (local) {
+            const id = ++lineIdRef.current;
+            if (narrationEnabledRef.current) {
+              setReasoning((r) => [...r, { id, text: '', kind: local.kind, streaming: true }]);
+              const fields = {
+                window_index: data.window_index,
+                risk_state: data.risk_state,
+                smoothed_probability: data.smoothed_probability,
+                raw_per_expert_scores: data.raw_per_expert_scores,
+                audio_quality: data.audio_quality,
+                recommended_action: data.recommended_action,
+              };
+              narrateRemote(fields, (acc) => {
+                setReasoning((r) => r.map((l) => (l.id === id ? { ...l, text: acc } : l)));
+              })
+                .then((full) => {
+                  setReasoning((r) =>
+                    r.map((l) => (l.id === id ? { ...l, text: full || local.text, streaming: false } : l))
+                  );
+                })
+                .catch(() => {
+                  // network / upstream / no-key → fall back to the grounded local line
+                  setReasoning((r) =>
+                    r.map((l) => (l.id === id ? { ...l, text: local.text, streaming: false } : l))
+                  );
+                });
+            } else {
+              setReasoning((r) => [...r, { id, text: local.text, kind: local.kind, streaming: false }]);
+            }
+          }
         }
       };
 
       ws.onclose = () => {
         setStatus('disconnected');
+        // Grounded closing line based on the final window we actually saw.
+        const v = verdictLine(lastMsgRef.current);
+        if (v) {
+          setReasoning((r) => [...r, { id: ++lineIdRef.current, text: v.text, kind: v.kind, streaming: false }]);
+        }
         stopRecording();
       };
 
@@ -344,6 +410,15 @@ export default function LiveMonitor() {
           </CardContent>
         </Card>
       </div>
+
+      {(isRecording || reasoning.length > 0) && (
+        <Card>
+          <CardHeader title="Live Reasoning" description="Narration of the detector's own per-window numbers" />
+          <CardContent>
+            <ReasoningLog reasoning={reasoning} />
+          </CardContent>
+        </Card>
+      )}
 
       {latestData && (
         <Card>

@@ -24,6 +24,7 @@ export default defineConfig({
       "/health": { target: BACKEND, changeOrigin: true },
       "/ws": { target: BACKEND, changeOrigin: true, ws: true },
       "/predict-file": { target: BACKEND, changeOrigin: true },
+      "/narrate": { target: BACKEND, changeOrigin: true },
     },
   },
 });
