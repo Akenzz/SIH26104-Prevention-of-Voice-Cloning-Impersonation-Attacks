@@ -288,7 +288,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             ):
                 try:
                     ready = state.apply_start(payload)
-                except ValueError as exc:
+                except (ValueError, ImportError) as exc:
+                    # ImportError: the streaming resampler needs scipy whenever
+                    # the client's rate differs from the target. Report it on the
+                    # socket instead of dropping the connection with a 1011.
                     await ws.send_json(state._error(str(exc)))
                     continue
                 await ws.send_json(ready)

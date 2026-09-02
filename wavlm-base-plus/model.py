@@ -67,6 +67,24 @@ class WavLMClassifier(nn.Module):
             nn.Linear(HEAD_HIDDEN, 1),
         )
 
+    def forward_with_embedding(self, waveform: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the spoof logit and pooled WavLM representation in one pass.
+
+        Callers that need both (the realtime adapter does, on every window) must
+        use this. Calling ``forward`` and ``get_embedding`` separately runs the
+        frozen backbone twice for the same audio.
+        """
+        # Backbone is always in eval mode; no grad through it.
+        with torch.no_grad():
+            outputs = self.backbone(input_values=waveform)
+
+        # last_hidden_state: (batch, time_frames, hidden)
+        # Mean-pool across the time dimension → (batch, hidden)
+        pooled = outputs.last_hidden_state.mean(dim=1)
+
+        # Head → single logit per sample
+        return self.head(pooled), pooled
+
     def forward(self, waveform: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -76,25 +94,12 @@ class WavLMClassifier(nn.Module):
             logit: (batch, 1)  raw unnormalised score
                    higher value = more evidence of spoof/fake
         """
-        # Backbone is always in eval mode; no grad through it.
-        with torch.no_grad():
-            outputs = self.backbone(input_values=waveform)
-
-        # last_hidden_state: (batch, time_frames, hidden)
-        hidden = outputs.last_hidden_state
-
-        # Mean-pool across the time dimension → (batch, hidden)
-        pooled = hidden.mean(dim=1)
-
-        # Head → single logit per sample
-        logit = self.head(pooled)   # (batch, 1)
+        logit, _ = self.forward_with_embedding(waveform)
         return logit
 
     def get_embedding(self, waveform: torch.Tensor) -> torch.Tensor:
         """Return the 768-dim pooled embedding (detached from graph)."""
-        with torch.no_grad():
-            outputs = self.backbone(input_values=waveform)
-            pooled  = outputs.last_hidden_state.mean(dim=1)
+        _, pooled = self.forward_with_embedding(waveform)
         return pooled  # (batch, 768)
 
 
@@ -165,8 +170,8 @@ def score(audio_window: np.ndarray) -> dict:
     waveform = waveform.to(_device_singleton)
 
     with torch.no_grad():
-        logit     = _model_singleton(waveform)              # (1, 1)
-        embedding = _model_singleton.get_embedding(waveform)  # (1, 768)
+        # One backbone pass for both outputs.
+        logit, embedding = _model_singleton.forward_with_embedding(waveform)
 
     return {
         "logit"        : logit.item(),

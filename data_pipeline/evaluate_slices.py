@@ -162,9 +162,12 @@ def _score_single_class(df_slice, adapter, sample_rate, window_sec):
         "n_samples": n,
         "mean_logit": float(np.mean(scores)),
         "std_logit":  float(np.std(scores)),
-        # FPR = fraction of bonafide flagged as spoof (logit > 0 threshold)
+        # Bonafide-only slices report false positives; spoof-only slices report
+        # false negatives.  Keeping the type explicit prevents a markdown report
+        # from accidentally presenting one as the other.
         "error_rate_at_zero_threshold": float(np.mean(np.array(scores) > 0)) if label_str == "bonafide"
                                         else float(np.mean(np.array(scores) <= 0)),
+        "error_type": "FP" if label_str == "bonafide" else "FN",
     }
 
 
@@ -311,8 +314,10 @@ def _write_markdown_report(results: dict, path: Path, model_name: str):
             return (f"| {label} | {m['eer']*100:.2f}% | {m['roc_auc']:.4f} | "
                     f"{m.get('num_bonafide',0):,} / {m.get('num_spoof',0):,} | |")
         if "error_rate_at_zero_threshold" in m:
-            return (f"| {label} | FP={m['error_rate_at_zero_threshold']*100:.2f}% | — | "
-                    f"{m.get('n_samples',0):,} bonafide | single-class |")
+            single_class = m.get("single_class", "unknown")
+            error_type = m.get("error_type", "FP" if single_class == "bonafide" else "FN")
+            return (f"| {label} | {error_type}={m['error_rate_at_zero_threshold']*100:.2f}% | — | "
+                    f"{m.get('n_samples',0):,} {single_class} | single-class |")
         return f"| {label} | — | — | — | |"
 
     header = "| Condition | EER | ROC-AUC | Bonafide / Spoof | Notes |"

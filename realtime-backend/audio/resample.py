@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from math import gcd
 
 import numpy as np
 
@@ -77,3 +78,94 @@ def to_target_rate(
         resampled.size,
     )
     return resampled, True
+
+
+class StreamingPolyphaseResampler:
+    """Stateful anti-aliased resampler for the PCM frames of one connection.
+
+    ``to_target_rate`` is correct for a complete file. Calling it once per
+    incoming frame is not. The browser's AudioWorklet hands us 128 samples at a
+    time, and running a 61-tap anti-aliasing FIR over 128-sample islands
+    restarts the filter — and re-rounds the output length — every 2.7 ms. At
+    48 kHz -> 16 kHz that measured ~138% RMS error against a correctly resampled
+    stream, plus +0.78% sample-rate drift (16125 samples emitted per second of
+    input instead of 16000).
+
+    This keeps the FIR state and the decimation phase across calls, so a stream
+    delivered in 128-sample frames produces the same samples as the same audio
+    resampled in one shot, apart from a fixed group-delay lag held back until
+    more input arrives. The filter is the Kaiser design
+    ``scipy.signal.resample_poly`` uses by default, so the anti-aliasing the
+    offline path relies on is preserved: naive linear interpolation would fold
+    everything above the target Nyquist back into the band as artifacts no
+    detector saw in training.
+
+    One instance per connection. Call :meth:`reset` on a stream discontinuity;
+    never share an instance between streams or sample rates.
+    """
+
+    def __init__(self, source_rate: int, target_rate: int):
+        if source_rate <= 0 or target_rate <= 0:
+            raise ValueError(f"invalid sample rates source={source_rate} target={target_rate}")
+        self.source_rate = int(source_rate)
+        self.target_rate = int(target_rate)
+        divisor = gcd(self.source_rate, self.target_rate)
+        self.up = self.target_rate // divisor
+        self.down = self.source_rate // divisor
+        self._h: np.ndarray | None = None
+        self._half_len = 0
+        if self.did_resample:
+            try:
+                from scipy.signal import firwin
+            except ImportError as exc:  # pragma: no cover - scipy is a hard requirement
+                raise ImportError(
+                    "scipy is required to resample a live stream without aliasing; "
+                    "install scipy>=1.10.0 (see realtime-backend/requirements.txt)"
+                ) from exc
+            max_rate = max(self.up, self.down)
+            self._half_len = 10 * max_rate
+            self._h = firwin(
+                2 * self._half_len + 1, 1.0 / max_rate, window=("kaiser", 5.0)
+            ) * self.up
+        self.reset()
+
+    @property
+    def did_resample(self) -> bool:
+        return self.source_rate != self.target_rate
+
+    def reset(self) -> None:
+        """Drop all filter state. Use on a stream gap, not mid-stream."""
+        self._zi = None if self._h is None else np.zeros(self._h.size - 1, dtype=np.float64)
+        self._phase = 0
+        self._warmup = self._half_len
+
+    def process(self, samples: np.ndarray) -> np.ndarray:
+        """Resample one frame, continuing from where the last frame ended."""
+        audio = np.asarray(samples, dtype=np.float32).reshape(-1)
+        if not self.did_resample or audio.size == 0:
+            return audio
+        if not np.isfinite(audio).all():
+            raise ValueError("audio contains non-finite samples")
+
+        from scipy.signal import lfilter
+
+        if self.up == 1:
+            upsampled = audio.astype(np.float64)
+        else:
+            upsampled = np.zeros(audio.size * self.up, dtype=np.float64)
+            upsampled[:: self.up] = audio
+
+        filtered, self._zi = lfilter(self._h, 1.0, upsampled, zi=self._zi)
+
+        # Drop the filter's group delay once, so output sample j lands at the
+        # instant to_target_rate() would have placed it.
+        if self._warmup:
+            drop = min(self._warmup, filtered.size)
+            filtered = filtered[drop:]
+            self._warmup -= drop
+
+        out = filtered[self._phase :: self.down]
+        # Carry the decimation position into the next frame instead of
+        # restarting at 0, which is what caused the per-frame drift.
+        self._phase += out.size * self.down - filtered.size
+        return out.astype(np.float32)

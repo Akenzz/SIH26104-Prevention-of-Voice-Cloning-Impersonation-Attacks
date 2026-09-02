@@ -27,45 +27,67 @@ def run(raw_index_path: Path, output_path: Path) -> pd.DataFrame:
     logger.info("Running Pre-Selection...")
     df = pd.read_csv(raw_index_path)
     
-    # We will build a list of chosen indices, then subset the DataFrame.
-    # At the same time, we overwrite the `split_hint` with the final assigned `split`.
+    # We build a list of chosen indices, then subset the DataFrame.  ``split_hint``
+    # is a hard boundary, not a suggestion: official dev/eval partitions must
+    # never be silently recycled into training during balancing.
     df["split"] = df["split_hint"]  # Default
     
     random.seed(RANDOM_SEED)
     rng = random.Random(RANDOM_SEED)
     
-    # 1. PRESERVE ALL release_in_the_wild
-    wild_mask = df["source"] == "release_in_the_wild"
-    df.loc[wild_mask, "split"] = "eval_ood"
-    chosen_wild = df[wild_mask].index.tolist()
-    
-    available_mask = ~wild_mask & ~df["held_out"]  # don't use held_out MLAAD generators for train/dev/sanity
-    
-    # Add held_out MLAAD generators to eval_ood automatically
-    mlaad_heldout_mask = (df["source"] == "mlaad") & df["held_out"]
-    df.loc[mlaad_heldout_mask, "split"] = "eval_ood"
-    chosen_heldout = df[mlaad_heldout_mask].index.tolist()
+    # 1. Preserve all externally assigned evaluation partitions.  In
+    # particular, ASVspoof's official eval split remains locked and held-out
+    # MLAAD generators remain OOD.  The prior implementation sampled from all
+    # remaining rows at the train step, which could put dev/eval audio in train.
+    held_out_mask = (
+        df["held_out"].fillna(False).astype(str).str.strip().str.lower().isin({"1", "true", "yes"})
+    )
+    locked_eval_mask = df["split_hint"].isin(["eval", "eval_ood"]) | held_out_mask
+    df.loc[held_out_mask, "split"] = "eval_ood"
+    chosen_locked_eval = df[locked_eval_mask].index.tolist()
     
     # 2. EVAL_SANITY (3,000 bonafide strictly from SANITY_SOURCES)
-    sanity_mask = available_mask & df["source"].isin(SANITY_SOURCES) & (df["label"] == "bonafide")
+    sanity_mask = (
+        (df["split_hint"] == "train")
+        & ~held_out_mask
+        & df["source"].isin(SANITY_SOURCES)
+        & (df["label"] == "bonafide")
+    )
     sanity_candidates = df[sanity_mask].index.tolist()
     chosen_sanity = _stratified_sample(df.loc[sanity_candidates], SANITY_TARGET, rng)
     df.loc[chosen_sanity, "split"] = "eval_sanity"
-    available_mask &= ~df.index.isin(chosen_sanity)
+
+    # A real-speaker safety holdout is meaningless if other recordings from the
+    # same speaker remain in training.  When a source does not provide a speaker
+    # identifier, fall back to its individual file rather than excluding a whole
+    # source due to a blank ID.
+    held_speakers = {
+        (str(df.at[idx, "source"]), str(df.at[idx, "speaker_id"]))
+        for idx in chosen_sanity
+        if str(df.at[idx, "speaker_id"]).strip() not in {"", "nan", "None"}
+    }
     
     # 3. DEV (~1,500 bonafide, ~1,500 spoof from split_hint == 'dev')
-    dev_b_mask = available_mask & (df["split_hint"] == "dev") & (df["label"] == "bonafide")
-    dev_s_mask = available_mask & (df["split_hint"] == "dev") & (df["label"] == "spoof")
+    dev_b_mask = (~held_out_mask) & (df["split_hint"] == "dev") & (df["label"] == "bonafide")
+    dev_s_mask = (~held_out_mask) & (df["split_hint"] == "dev") & (df["label"] == "spoof")
     
     chosen_dev_b = _stratified_sample(df[dev_b_mask], DEV_TARGET_PER_CLASS, rng)
     chosen_dev_s = _stratified_sample(df[dev_s_mask], DEV_TARGET_PER_CLASS, rng)
     
     df.loc[chosen_dev_b + chosen_dev_s, "split"] = "dev"
-    available_mask &= ~df.index.isin(chosen_dev_b + chosen_dev_s)
     
-    # 4. TRAIN (20k bonafide, 20k spoof from remaining)
-    train_b_mask = available_mask & (df["label"] == "bonafide")
-    train_s_mask = available_mask & (df["label"] == "spoof")
+    # 4. TRAIN (20k bonafide, 20k spoof).  Only source rows explicitly
+    # assigned to train are eligible; unselected dev rows are intentionally not
+    # repurposed as training data.
+    train_base_mask = (df["split_hint"] == "train") & ~held_out_mask & ~df.index.isin(chosen_sanity)
+    if held_speakers:
+        is_held_speaker = df.apply(
+            lambda row: (str(row["source"]), str(row["speaker_id"])) in held_speakers,
+            axis=1,
+        )
+        train_base_mask &= ~is_held_speaker
+    train_b_mask = train_base_mask & (df["label"] == "bonafide")
+    train_s_mask = train_base_mask & (df["label"] == "spoof")
     
     chosen_train_b = _stratified_sample(df[train_b_mask], TRAIN_BONAFIDE_TARGET, rng)
     chosen_train_s = _stratified_sample(df[train_s_mask], TRAIN_SPOOF_TARGET, rng)
@@ -74,8 +96,7 @@ def run(raw_index_path: Path, output_path: Path) -> pd.DataFrame:
     
     # Combine all chosen indices
     all_chosen = (
-        chosen_wild + 
-        chosen_heldout + 
+        chosen_locked_eval +
         chosen_sanity + 
         chosen_dev_b + chosen_dev_s + 
         chosen_train_b + chosen_train_s

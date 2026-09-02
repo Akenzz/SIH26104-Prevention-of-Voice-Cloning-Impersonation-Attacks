@@ -14,6 +14,20 @@ ENV/
 .env.*
 !.env.example
 
+# Node / frontend dependencies — voice-integrity-frontend/.gitignore only applies
+# once that directory is checked out, so keep a repo-root rule too: a stale
+# checkout with node_modules on disk would otherwise show thousands of
+# commit-ready files.
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.vite/
+
 # Packaging
 build/
 dist/
