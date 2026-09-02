@@ -171,8 +171,9 @@ class WavLMExpert:
 
         use_amp = self.device.type == "cuda"
         with torch.no_grad(), torch.autocast(device_type=self.device.type, enabled=use_amp):
-            logit_t   = self.model(tensor)                      # (1, 1)
-            embed_t   = self.model.get_embedding(tensor)        # (1, 768)
+            # One backbone pass per window.  Calling ``forward`` and
+            # ``get_embedding`` separately doubled WavLM inference cost.
+            logit_t, embed_t = self.model.forward_with_embedding(tensor)
 
         logit     = float(logit_t.squeeze().item())
         embedding = embed_t.squeeze(0).float().cpu().numpy().tolist()

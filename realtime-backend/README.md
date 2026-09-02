@@ -101,10 +101,19 @@ list (label, probability, risk state, calibrator version, decision flag) and
 `encoding` is `pcm_s16le` or `pcm_f32le`. A declared rate other than 16 kHz is
 resampled and logged.
 
+Resampling is stateful per connection. The browser's AudioWorklet hands the
+frontend 128 samples at a time and each block is forwarded as its own message, so
+each frame continues the previous frame's anti-aliasing filter and decimation
+phase instead of being resampled in isolation. Frames of any size produce the
+same 16 kHz stream as resampling the whole recording offline. Because that filter
+state is tied to one rate pair, `sample_rate` cannot change mid-stream — send a
+new `start` message instead.
+
 2. Client sends binary PCM frames in that encoding. With `"binary_seq": true` on
    start, each frame is `uint32le sequence_number || pcm`. JSON frames
    (`{"type":"frame","sequence_number":0,"pcm":[...]}`) also work; gaps or
-   reorders emit `unavailable` with `dropped_frames: true`.
+   reorders emit `unavailable` with `dropped_frames: true`, and drop the buffered
+   tail, resampler state, and smoothed score so no later window spans the gap.
 
 3. Server replies with one `score` message per completed window:
 
@@ -203,8 +212,9 @@ pytest
 ```
 
 Covers calibration monotonicity, that both experts get distinct calibrators, the
-policy bands, the per-expert message contract, fail-safe paths, and expert smoke
-tests. `pytest -m slow -s` adds the EER benchmarks (needs local eval manifests).
+policy bands, the per-expert message contract, fail-safe paths, streaming
+resampler equivalence with the offline path, and expert smoke tests.
+`pytest -m slow -s` adds the EER benchmarks (needs local eval manifests).
 
 ```bash
 python scripts/wav_client.py --wav path/to/file.wav   # feed the WebSocket

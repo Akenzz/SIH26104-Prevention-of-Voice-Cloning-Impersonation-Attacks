@@ -80,6 +80,13 @@ def test_out_of_order_json_frames_are_unavailable():
     assert gap[0]["dropped_frames"] is True
     assert gap[0]["audio_quality"] == "dropped_or_reordered"
     assert gap[0]["smoothed_probability"] is None
+    # A gap invalidates everything buffered before it: the next window must not
+    # splice audio from both sides of the discontinuity, and the smoothed score
+    # must not carry over from the pre-gap stream.
+    assert state.windows_scored == 0
+    assert state.buffer is not None and len(state.buffer) == 0
+    assert state.ema.value is None
+    assert all(e.value is None for e in state.expert_emas.values())
 
 
 def test_binary_seq_gap_is_unavailable():
@@ -94,6 +101,7 @@ def test_binary_seq_gap_is_unavailable():
     assert messages[0]["risk_state"] == "unavailable"
     assert messages[0]["dropped_frames"] is True
     assert messages[0]["audio_quality"] == "dropped_or_reordered"
+    assert state.buffer is not None and len(state.buffer) == 0
 
 
 def test_healthy_audio_streams_increasing_sequence_numbers():
@@ -115,3 +123,70 @@ def test_healthy_audio_streams_increasing_sequence_numbers():
     assert "unavailable" not in states
     assert states[-1] in {"collecting", "low", "uncertain", "high"}
     assert state.out_seq == len(seqs)
+
+
+def test_48k_browser_frames_produce_correctly_resampled_windows():
+    """The real frontend path: 48 kHz audio arriving 128 samples at a time.
+
+    ``LiveMonitor.jsx`` forwards each AudioWorklet render quantum as its own
+    WebSocket message, so the connection must resample a 128-sample frame
+    without restarting the anti-aliasing filter. What the experts see has to be
+    the same audio the offline resampler would have produced.
+    """
+    from audio.resample import to_target_rate
+
+    state = _state()
+    _start(state, sample_rate=48000)
+    assert state.resampler is not None
+    assert state.resampler.did_resample is True
+
+    captured: list[np.ndarray] = []
+    dummy = state.experts["dummy"]
+    inner = dummy.score
+    dummy.score = lambda w: (captured.append(np.array(w)), inner(w))[1]
+
+    rng = np.random.default_rng(7)
+    # Enough 48 kHz input for one 16 kHz window plus the held-back FIR tail.
+    total_in = (state.settings.window_samples + 128) * 3
+    source = rng.normal(0, 0.1, total_in).astype(np.float32)
+    for start in range(0, source.size, 128):
+        state.ingest_binary(_pcm(source[start : start + 128]))
+
+    assert captured, "no window was ever scored from 48 kHz frames"
+    window = captured[0]
+    assert window.size == state.settings.window_samples
+
+    offline, _ = to_target_rate(source, 48000, state.settings.target_sample_rate)
+    np.testing.assert_allclose(window, offline[: window.size], rtol=0, atol=2e-6)
+
+
+def test_stream_gap_does_not_splice_audio_across_the_discontinuity():
+    """A dropped frame must invalidate the buffered tail, not blend into it."""
+    state = _state()
+    _start(state, binary_seq=True)
+    rng = np.random.default_rng(8)
+    hop = state.settings.hop_samples
+
+    state.ingest_binary((0).to_bytes(4, "little") + _pcm(rng.normal(0, 0.1, hop).astype(np.float32)))
+    assert state.buffer is not None and len(state.buffer) > 0
+
+    gap = state.ingest_binary(
+        (5).to_bytes(4, "little") + _pcm(rng.normal(0, 0.1, hop).astype(np.float32))
+    )
+    assert gap[0]["risk_state"] == "unavailable"
+    assert len(state.buffer) == 0
+    assert state.resampler is not None  # reset is a no-op at 16 kHz, but must exist
+
+    # The stream recovers on its own once frames arrive in order again.
+    recovered: list[str] = []
+    needed = state.settings.window_samples + hop
+    sent = 0
+    seq = 6
+    while sent < needed:
+        frame = rng.normal(0, 0.1, hop).astype(np.float32)
+        for msg in state.ingest_binary(seq.to_bytes(4, "little") + _pcm(frame)):
+            recovered.append(msg["risk_state"])
+        seq += 1
+        sent += hop
+    assert recovered
+    assert "unavailable" not in recovered
