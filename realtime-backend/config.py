@@ -30,9 +30,9 @@ HOP_SEC = float(os.environ.get("HOP_SEC", "0.5"))
 HUB_EXPERTS = {
     # Expert 1 (Person A): WavLM Base+ front-end + classifier head.
     "wavlm": {
-        "repo_id": "Akenzz/Expert-1",
-        "filename": "best_model.pt",
-        "local_name": "wavlm_best_model.pt",
+        "repo_id": "Akenzz/SIH-Models",
+        "filename": "wavlm_best_model_v4.pt",
+        "local_name": "wavlm_best_model_v4.pt",
     },
     # Expert 2: LFCC-LCNN trained on the HYBRID clean-model mix — 6 languages
     # (hi/en/kn/ml/mr/ta), ~20k bonafide / ~20k spoof base clips VAD-sliced to
@@ -50,6 +50,12 @@ HUB_EXPERTS = {
         "filename": "hybrid_clean.pth",
         "local_name": "hybrid_clean.pth",
     },
+    # Expert 3: TakHemlata SSL
+    "ssl": {
+        "repo_id": "Akenzz/SIH-Models",
+        "filename": "best_SSL_model_LA.pth",
+        "local_name": "best_SSL_model_LA.pth",
+    },
 }
 
 # Human-facing labels for the frontend, so the UI never has to hardcode names.
@@ -57,6 +63,7 @@ HUB_EXPERTS = {
 EXPERT_LABELS = {
     "wavlm": "Expert-1: WavLM Base+",
     "hybrid": "Expert-2: LFCC-LCNN Hybrid",
+    "ssl": "Expert-3: TakHemlata SSL",
 }
 
 # Per-expert Platt calibrators. Each expert's logits live on their own scale, so
@@ -64,8 +71,9 @@ EXPERT_LABELS = {
 # still comes from SINGLE_EXPERT via CALIBRATOR_PATH; these are what let the UI
 # show a meaningful probability for BOTH models side by side.
 EXPERT_CALIBRATORS = {
-    "wavlm": ARTIFACTS_DIR / "platt_v2_combined_dataset.json",
+    "wavlm": ARTIFACTS_DIR / "platt_v4.json",
     "hybrid": ARTIFACTS_DIR / "calibrator_hybrid_clean.json",
+    "ssl": ARTIFACTS_DIR / "platt_ssl.json",
 }
 
 
@@ -84,8 +92,8 @@ class Settings:
     # Defaults are the shipped demo config: both experts scored and reported,
     # `hybrid` drives the risk band. `python server.py` with no env vars set is a
     # working install; env vars only exist for experiments.
-    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid"))
-    fusion_mode: str = os.environ.get("FUSION_MODE", "single")
+    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid,ssl"))
+    fusion_mode: str = os.environ.get("FUSION_MODE", "lr_fusion")
     single_expert: str = os.environ.get("SINGLE_EXPERT", "hybrid")
     ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.3"))
     device: str = os.environ.get("DEVICE", "cpu")
@@ -111,14 +119,14 @@ class Settings:
 
 def load_settings() -> Settings:
     settings = Settings()
-    if settings.fusion_mode not in {"single", "fused"}:
-        raise ValueError(f"FUSION_MODE must be 'single' or 'fused', got {settings.fusion_mode!r}")
+    if settings.fusion_mode not in {"single", "fused", "heuristic", "heuristic_avg", "lr_fusion"}:
+        raise ValueError(f"FUSION_MODE must be one of 'single', 'fused', 'heuristic', 'heuristic_avg', 'lr_fusion', got {settings.fusion_mode!r}")
     if not settings.experts:
         raise ValueError("EXPERTS must list at least one expert")
-    unknown = [e for e in settings.experts if e not in HUB_EXPERTS and e != "dummy"]
+    unknown = [e for e in settings.experts if e not in HUB_EXPERTS and e not in {"dummy", "ssl"}]
     if unknown:
         raise ValueError(
-            f"Unknown expert(s) {unknown}. Known: {', '.join(HUB_EXPERTS)}. "
+            f"Unknown expert(s) {unknown}. Known: {', '.join(HUB_EXPERTS)}, ssl. "
             "The older lfcc/hindi/mc_v3/prosody experts were removed."
         )
     if settings.fusion_mode == "single":

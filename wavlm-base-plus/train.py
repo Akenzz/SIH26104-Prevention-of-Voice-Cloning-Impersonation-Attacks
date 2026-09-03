@@ -24,8 +24,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .dataset import SpeechDataset, WINDOW_SAMPLES
-from .model import WavLMClassifier
+from dataset import SpeechDataset, WINDOW_SAMPLES
+from model import WavLMClassifier
 
 # ─── Hyperparameters / paths (edit these or pass via CLI) ─────────────────────
 # TODO: Change MANIFEST_CSV to point at your real dataset manifest.

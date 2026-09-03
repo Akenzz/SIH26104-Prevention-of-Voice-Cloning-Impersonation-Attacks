@@ -141,7 +141,9 @@ export default function LiveMonitor() {
           const newScore = {
             time: (data.sequence_number * 0.5).toFixed(1), // Assuming 0.5s hop for display
             prob: data.smoothed_probability,
+            lr_prob: data.lr_probability,
             state: data.risk_state,
+            expert_probs: data.expert_probabilities || {},
           };
           
           setScores(prev => {
@@ -269,8 +271,20 @@ export default function LiveMonitor() {
                </div>
                
                <h2 className="text-sm font-medium text-zinc-400 uppercase tracking-widest mb-2">Current State</h2>
-               <div className="mb-2">
+               <div className="mb-2 flex justify-center items-center gap-2">
                  <RiskBadge state={currentState || 'collecting'} />
+                 {(() => {
+                    if (!latestData || !currentState || currentState === 'collecting') return null;
+                    const wavlmProb = latestData.expert_probabilities?.wavlm;
+                    if (typeof wavlmProb !== 'number') return null;
+                    if ((currentState === 'high' || currentState === 'uncertain') && wavlmProb < 0.35) {
+                      return <span className="text-[10px] uppercase font-bold tracking-wider bg-amber-500/10 text-amber-500 border border-amber-500/20 px-2 py-0.5 rounded flex items-center gap-1"><AlertTriangle size={10} /> Disagreement</span>;
+                    }
+                    if ((currentState === 'low') && wavlmProb > 0.65) {
+                      return <span className="text-[10px] uppercase font-bold tracking-wider bg-amber-500/10 text-amber-500 border border-amber-500/20 px-2 py-0.5 rounded flex items-center gap-1"><AlertTriangle size={10} /> Disagreement</span>;
+                    }
+                    return null;
+                 })()}
                </div>
                {currentState && currentState !== 'collecting' && (
                  <p className="text-4xl font-bold text-zinc-100 mt-4">
@@ -325,13 +339,45 @@ export default function LiveMonitor() {
                     />
                     <ReferenceLine y={0.35} stroke="#10b981" strokeDasharray="3 3" opacity={0.3} />
                     <ReferenceLine y={0.65} stroke="#ef4444" strokeDasharray="3 3" opacity={0.3} />
+                    
+                    {/* Render a line for each expert dynamically */}
+                    {scores.length > 0 && scores[0].expert_probs && Object.keys(scores[0].expert_probs).map(expert => {
+                      const color = {
+                        wavlm: "#3b82f6", // blue
+                        hybrid: "#ec4899", // pink
+                        ssl: "#eab308" // yellow
+                      }[expert] || "#8b5cf6";
+                      return (
+                        <Line 
+                          key={expert}
+                          type="monotone" 
+                          dataKey={(d) => d.expert_probs?.[expert] ?? null}
+                          name={expert}
+                          stroke={color} 
+                          strokeWidth={2}
+                          strokeDasharray="5 5"
+                          dot={false}
+                          activeDot={{ r: 4, fill: color }}
+                        />
+                      );
+                    })}
+                    <Line 
+                      type="monotone" 
+                      dataKey="lr_prob" 
+                      name="LR Fusion"
+                      stroke="#f97316" 
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4, fill: '#f97316' }}
+                    />
                     <Line 
                       type="monotone" 
                       dataKey="prob" 
+                      name="Overall Fusion"
                       stroke="#f4f4f5" 
-                      strokeWidth={2}
+                      strokeWidth={3}
                       dot={false}
-                      isAnimationActive={false}
+                      activeDot={{ r: 6, fill: '#f4f4f5' }}
                     />
                   </LineChart>
                 </ResponsiveContainer>

@@ -70,9 +70,6 @@ def health() -> JSONResponse:
         {
             "status": "ok",
             "experts": names,
-            # Display names + the calibrator behind each expert, so the UI never
-            # has to hardcode model names and a teammate can see at a glance
-            # which artifact produced which probability.
             "expert_details": [
                 {
                     "name": n,
@@ -83,6 +80,12 @@ def health() -> JSONResponse:
                 for n in names
             ],
             "decision_expert": settings.single_expert,
+            "decision_label": {
+                "lr_fusion": "LR Fusion (WavLM + LFCC + SSL)",
+                "heuristic_avg": "LFCC + SSL Average",
+                "heuristic": "LFCC + SSL Heuristic",
+                "single": EXPERT_LABELS.get(settings.single_expert, settings.single_expert),
+            }.get(settings.fusion_mode, settings.fusion_mode),
             "fusion_mode": settings.fusion_mode,
             "window_sec": settings.window_sec,
             "hop_sec": settings.hop_sec,
@@ -208,6 +211,11 @@ async def predict_file(file: UploadFile = File(...)):
             "start_time_sec": start_time_sec,
             "risk_state": state,
             "calibrated_probability": smoothed if smoothed is not None else probability,
+            "lr_probability": result.lr_probability,
+            "heuristic_avg_probability": (
+                (result.expert_probabilities.get("hybrid", 0.0) + result.expert_probabilities.get("ssl", 0.0)) / 2.0
+                if result.expert_probabilities else None
+            ),
             "raw_per_expert_scores": {k: v["logit"] for k, v in scores.items()} if scores else {},
             "per_expert_probability": result.expert_probabilities,
         })

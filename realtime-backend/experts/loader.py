@@ -44,7 +44,11 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
                 name="hybrid",
             )
             continue
-        raise ValueError(f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid")
+        if key == "ssl":
+            from .ssl_antispoof import SSLExpert
+            loaded[key] = SSLExpert()
+            continue
+        raise ValueError(f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid, ssl")
     if not loaded:
         raise ValueError("No experts loaded")
     return loaded

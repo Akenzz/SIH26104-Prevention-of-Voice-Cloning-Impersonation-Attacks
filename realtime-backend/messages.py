@@ -43,6 +43,7 @@ class OutgoingMessage(TypedDict):
     audio_quality: Optional[str]
     window_index: int
     latency_ms: Optional[float]
+    lr_probability: Optional[float]
 
 
 def expert_logits(scores: dict[str, Score]) -> dict[str, float]:
@@ -91,6 +92,7 @@ def build_message(
     window_index: int,
     latency_ms: float | None,
     expert_probabilities: dict[str, float] | None = None,
+    lr_probability: float | None = None,
     expert_calibrators: dict[str, Any] | None = None,
     policy: PolicyConfig | None = None,
 ) -> dict[str, Any]:
@@ -116,4 +118,5 @@ def build_message(
         "audio_quality": audio_quality,
         "window_index": int(window_index),
         "latency_ms": None if latency_ms is None else round(float(latency_ms), 3),
+        "lr_probability": None if lr_probability is None else float(lr_probability),
     }

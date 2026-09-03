@@ -110,6 +110,7 @@ data_pipeline/test_*.py
 # Model checkpoints
 expert1/checkpoints/
 lfcc-detector/checkpoints/
+ssl-detector/fairseq-a54021305d6b3c4c5959ac9395135f63202db8f1/
 *.pt
 *.pth
 *.ckpt
@@ -128,6 +129,10 @@ lfcc-detector/checkpoints/
 *.wav
 *.flac
 *.mp3
+
+# Local caches
+*_logits_cache.csv
+*cache*.csv
 
 # Training outputs
 checkpoints/

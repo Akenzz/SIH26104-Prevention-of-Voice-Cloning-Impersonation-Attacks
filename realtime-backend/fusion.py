@@ -41,10 +41,26 @@ def fuse_logits(
     """Return (fused_or_selected_logit, expert_used_label)."""
     if not scores:
         raise ValueError("no expert scores to fuse")
+        
+    if mode == "heuristic_avg":
+        return 0.0, "hybrid+ssl"
+
+    if mode == "lr_fusion":
+        # The actual probability is computed in pipeline.py from the LR model.
+        # We return a dummy logit here so fuse_logits doesn't raise.
+        name = single_expert if single_expert in scores else next(iter(scores))
+        return float(scores[name]["logit"]), "lr_fusion"
 
     if mode == "single":
         name = single_expert if single_expert in scores else next(iter(scores))
         return float(scores[name]["logit"]), name
+        
+    if mode == "heuristic":
+        # The tuned real-world threshold was -5.0.
+        # We shift it by +5.0 so 0.0 is the center decision boundary for the calibrator sigmoid.
+        l_logit = float(scores["hybrid"]["logit"]) if "hybrid" in scores else 0.0
+        s_logit = float(scores["ssl"]["logit"]) if "ssl" in scores else 0.0
+        return float(l_logit + s_logit + 5.0), "hybrid+ssl"
 
     if mode != "fused":
         raise ValueError(f"unknown fusion mode {mode!r}")
