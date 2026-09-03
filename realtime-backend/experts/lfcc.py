@@ -43,12 +43,25 @@ class LFCCLCNNExpert:
         self.name = name or hub_key
         spec = HUB_EXPERTS[hub_key]
         self.device = torch.device(device)
-        self.checkpoint_path = ensure_checkpoint(
-            repo_id=spec["repo_id"],
-            filename=spec["filename"],
-            cache_dir=cache_dir,
-            local_name=spec["local_name"],
-        )
+        if spec.get("local_only"):
+            # Local-only checkpoint (e.g. a fine-tune not published to the Hub):
+            # load straight from the cache dir and never touch the network. This
+            # deliberately skips ensure_checkpoint so its HEAD/size-diff staleness
+            # check can never re-download or clobber a file that has no Hub twin.
+            dest = Path(cache_dir) / spec["local_name"]
+            if not (dest.exists() and dest.stat().st_size > 0):
+                raise RuntimeError(
+                    f"Local-only checkpoint for expert {self.name!r} not found at {dest}.\n"
+                    f"Place {spec['local_name']!r} in {cache_dir} (it is not on the Hub)."
+                )
+            self.checkpoint_path = dest
+        else:
+            self.checkpoint_path = ensure_checkpoint(
+                repo_id=spec["repo_id"],
+                filename=spec["filename"],
+                cache_dir=cache_dir,
+                local_name=spec["local_name"],
+            )
         self._blob = torch_load_checkpoint(self.checkpoint_path, map_location=str(self.device))
         self.model = None
         self._wire_model()

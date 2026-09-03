@@ -72,6 +72,23 @@ HUB_EXPERTS = {
         "filename": "hybrid_clean.pth",
         "local_name": "hybrid_clean.pth",
     },
+    # Expert 2b: the SAME LFCC-LCNN architecture warm-started from `hybrid` for
+    # 5 epochs on the hybrid mix PLUS 12 modern zero-shot TTS/VC clips
+    # (fireredtts/omni/sopro/styletts2/chatterbox/qwen ...). Flips 6/8 of those
+    # engines from missed->caught at a cost of +0.5pt in-domain dev EER (2.42 ->
+    # 2.93%) and slightly higher spoof-sensitivity. This is a LOCAL-ONLY
+    # checkpoint (not published to the Hub): `local_only` makes experts/lfcc.py
+    # load model_cache/<local_name> directly and SKIP ensure_checkpoint, so the
+    # HEAD/size-diff staleness check can never re-download or clobber it. Keeps
+    # `hybrid` (hybrid_clean.pth) byte-untouched and separate. Needs its OWN
+    # calibrator (artifacts/calibrator_hybrid_newclips.json) — its logit scale
+    # shifted relative to `hybrid`.
+    "hybrid_nc": {
+        "repo_id": "local",  # unused: local_only bypasses all Hub access
+        "filename": "hybrid_clean_plus_newclips_final.pth",
+        "local_name": "hybrid_clean_plus_newclips_final.pth",
+        "local_only": True,
+    },
 }
 
 # Human-facing labels for the frontend, so the UI never has to hardcode names.
@@ -79,6 +96,7 @@ HUB_EXPERTS = {
 EXPERT_LABELS = {
     "wavlm": "Expert-1: WavLM Base+",
     "hybrid": "Expert-2: LFCC-LCNN Hybrid",
+    "hybrid_nc": "Expert-2b: LFCC-LCNN Hybrid + new engines",
 }
 
 # Per-expert Platt calibrators. Each expert's logits live on their own scale, so
@@ -88,6 +106,7 @@ EXPERT_LABELS = {
 EXPERT_CALIBRATORS = {
     "wavlm": ARTIFACTS_DIR / "platt_v2_combined_dataset.json",
     "hybrid": ARTIFACTS_DIR / "calibrator_hybrid_clean.json",
+    "hybrid_nc": ARTIFACTS_DIR / "calibrator_hybrid_newclips.json",
 }
 
 
@@ -103,17 +122,21 @@ class Settings:
     target_sample_rate: int = TARGET_SAMPLE_RATE
     window_sec: float = WINDOW_SEC
     hop_sec: float = HOP_SEC
-    # Defaults are the shipped demo config: both experts scored and reported,
-    # `hybrid` drives the risk band. `python server.py` with no env vars set is a
-    # working install; env vars only exist for experiments.
-    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid"))
+    # Defaults are the shipped demo config: all three experts scored and
+    # reported, `hybrid_nc` (the new-engines fine-tune) drives the risk band.
+    # `python server.py` with no env vars set is a working install; env vars only
+    # exist for experiments. To revert the decision to the original shipped
+    # hybrid, set SINGLE_EXPERT=hybrid and
+    # CALIBRATOR_PATH=artifacts/calibrator_hybrid_clean.json (or edit the two
+    # defaults below). `hybrid` stays loaded either way, so the UI shows both.
+    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid,hybrid_nc"))
     fusion_mode: str = os.environ.get("FUSION_MODE", "single")
-    single_expert: str = os.environ.get("SINGLE_EXPERT", "hybrid")
+    single_expert: str = os.environ.get("SINGLE_EXPERT", "hybrid_nc")
     ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.3"))
     device: str = os.environ.get("DEVICE", "cpu")
     fusion_path: Path = Path(os.environ.get("FUSION_PATH", str(ARTIFACTS_DIR / "fusion.json")))
     calibrator_path: Path = Path(
-        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "calibrator_hybrid_clean.json"))
+        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "calibrator_hybrid_newclips.json"))
     )
     policy_path: Path = Path(os.environ.get("POLICY_PATH", str(ARTIFACTS_DIR / "policy.json")))
     model_cache_dir: Path = MODEL_CACHE_DIR

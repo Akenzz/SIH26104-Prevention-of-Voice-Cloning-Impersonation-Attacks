@@ -44,7 +44,23 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
                 name="hybrid",
             )
             continue
-        raise ValueError(f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid")
+        if key == "hybrid_nc":
+            # Same LFCC-LCNN architecture as `hybrid`, warm-started 5 epochs on
+            # the hybrid mix + 12 modern TTS/VC clips. LOCAL-ONLY checkpoint
+            # (config.HUB_EXPERTS["hybrid_nc"]["local_only"] = True): loaded
+            # straight from model_cache/, never fetched from the Hub. Reads with
+            # its OWN calibrator (artifacts/calibrator_hybrid_newclips.json);
+            # its logit scale differs from `hybrid`.
+            from .lfcc import LFCCLCNNExpert
+
+            loaded[key] = LFCCLCNNExpert(
+                cache_dir=settings.model_cache_dir,
+                device=settings.device,
+                hub_key="hybrid_nc",
+                name="hybrid_nc",
+            )
+            continue
+        raise ValueError(f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid, hybrid_nc")
     if not loaded:
         raise ValueError("No experts loaded")
     return loaded
@@ -56,6 +72,9 @@ def prefetch_hub_files(cache_dir: Path) -> None:
     from .hub import ensure_checkpoint
 
     for spec in HUB_EXPERTS.values():
+        if spec.get("local_only"):
+            # Not on the Hub — nothing to prefetch; it ships in model_cache/.
+            continue
         ensure_checkpoint(
             repo_id=spec["repo_id"],
             filename=spec["filename"],
