@@ -1,11 +1,19 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
-import { UploadCloud, FileAudio, AlertCircle, BarChart3, Activity, ChevronDown } from 'lucide-react';
+import { UploadCloud, FileAudio, AlertCircle, BarChart3, ChevronDown, Sliders } from 'lucide-react';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { Badge, RiskBadge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Spinner } from '../components/ui/Spinner';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
+
+const FUSION_MODES = [
+  { key: 'lr_fusion',      label: 'LR Fusion (3-Expert)',    dataKey: 'lr_probability',           color: '#a855f7' },
+  { key: 'heuristic_avg', label: 'LFCC + SSL Avg',          dataKey: 'heuristic_avg_probability', color: '#f97316' },
+  { key: 'wavlm',         label: 'WavLM Only',              dataKey: 'per_expert_probability.wavlm', color: '#3b82f6' },
+  { key: 'hybrid',        label: 'LFCC-LCNN Only',          dataKey: 'per_expert_probability.hybrid', color: '#ec4899' },
+  { key: 'ssl',           label: 'TakHemlata SSL Only',     dataKey: 'per_expert_probability.ssl',   color: '#eab308' },
+];
 
 export default function FileAnalysis() {
   const [file, setFile] = useState(null);
@@ -14,7 +22,18 @@ export default function FileAnalysis() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [expandedExpert, setExpandedExpert] = useState(null);
+  const [selectedMode, setSelectedMode] = useState('lr_fusion'); // which signal drives overall line
+  const [health, setHealth] = useState(null);
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    axios.get('/health').then(r => {
+      setHealth(r.data);
+      // auto-select whatever the backend is running
+      const m = r.data?.fusion_mode;
+      if (m && FUSION_MODES.find(f => f.key === m)) setSelectedMode(m);
+    }).catch(() => {});
+  }, []);
 
   // Aggregate a single expert's raw per-window logits into displayable stats.
   // The backend reports raw logits (higher = more spoof-like) per window in
@@ -183,6 +202,37 @@ export default function FileAnalysis() {
           <h2 className="text-lg font-medium text-zinc-100 flex items-center gap-2">
             <BarChart3 size={20} className="text-zinc-400"/> Analysis Results
           </h2>
+
+          {/* Mode Selector */}
+          <Card>
+            <CardContent className="pt-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="flex items-center gap-1.5 text-sm text-zinc-400 mr-2">
+                  <Sliders size={14} /> Primary Decision:
+                </span>
+                {FUSION_MODES.map(m => (
+                  <button
+                    key={m.key}
+                    onClick={() => setSelectedMode(m.key)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
+                      selectedMode === m.key
+                        ? 'border-transparent text-zinc-950'
+                        : 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
+                    }`}
+                    style={selectedMode === m.key ? { backgroundColor: m.color } : {}}
+                  >
+                    {m.label}
+                    {health?.fusion_mode === m.key && (
+                      <span className="ml-1.5 opacity-70">(backend)</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-zinc-600 mt-2">
+                Select which model's probability drives the white Overall line on the chart. This is purely visual — the backend decision uses the mode tagged "(backend)".
+              </p>
+            </CardContent>
+          </Card>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <Card className="md:col-span-2">
@@ -191,7 +241,24 @@ export default function FileAnalysis() {
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-6">
                   <div className="flex-1 w-full flex justify-between sm:block">
                     <p className="text-sm text-zinc-400 mb-1">Final Risk State</p>
-                    <RiskBadge state={result.summary.overall_risk_state} />
+                    <div className="flex items-center gap-2">
+                      <RiskBadge state={result.summary.overall_risk_state} />
+                      {(() => {
+                        const finalState = result.summary.overall_risk_state;
+                        const wavlmProb = result.summary.expert_probabilities?.wavlm;
+                        if (typeof wavlmProb !== 'number') return null;
+                        if ((finalState === 'spoof' || finalState === 'suspicious') && wavlmProb < 0.35) {
+                          return <span className="text-[10px] uppercase font-bold tracking-wider bg-amber-500/10 text-amber-500 border border-amber-500/20 px-2 py-0.5 rounded flex items-center gap-1"><AlertCircle size={10} /> Disagreement</span>;
+                        }
+                        if (finalState === 'bonafide' && wavlmProb > 0.65) {
+                          return <span className="text-[10px] uppercase font-bold tracking-wider bg-amber-500/10 text-amber-500 border border-amber-500/20 px-2 py-0.5 rounded flex items-center gap-1"><AlertCircle size={10} /> Disagreement</span>;
+                        }
+                        return null;
+                      })()}
+                    </div>
+                    <p className="text-xs text-zinc-600 mt-1">
+                      Backend: {health?.decision_label || health?.fusion_mode || '…'}
+                    </p>
                   </div>
                   <div className="flex-1 w-full flex justify-between sm:block">
                     <p className="text-sm text-zinc-400 mb-1">Max Probability</p>
@@ -218,6 +285,8 @@ export default function FileAnalysis() {
                   const isOpen = expandedExpert === expert;
                   const stats = isOpen ? expertStats(expert) : null;
                   const hasProb = typeof e.probability === 'number' && Number.isFinite(e.probability);
+                  // Only show DECISION badge when the backend is running in single-expert mode for this expert
+                  const isActualDecision = health?.fusion_mode === 'single' && e.is_decision_expert;
                   return (
                     <div key={expert} className="border-b border-zinc-800/50 last:border-0">
                       <button
@@ -232,7 +301,7 @@ export default function FileAnalysis() {
                             className={`text-zinc-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}
                           />
                           <span className="text-sm font-medium text-zinc-300">{e.label || expert}</span>
-                          {e.is_decision_expert && (
+                          {isActualDecision && (
                             <span className="text-[10px] uppercase tracking-wide text-zinc-500 border border-zinc-700 rounded px-1.5 py-0.5">
                               decision
                             </span>
@@ -271,8 +340,7 @@ export default function FileAnalysis() {
                                 <span className="text-zinc-300">{stats.count}</span>
                               </div>
                               <p className="text-[11px] text-zinc-600 pt-1 border-t border-zinc-800">
-                                Raw logits: higher = more spoof-like, lower = more bonafide-like. The risk band above
-                                comes from the decision model’s calibrated probability, not these raw values.
+                                Raw logits: higher = more spoof-like, lower = more bonafide-like.
                               </p>
                             </div>
                           ) : (
@@ -310,26 +378,41 @@ export default function FileAnalysis() {
                       contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', color: '#f4f4f5' }}
                       itemStyle={{ color: '#f4f4f5' }}
                       labelFormatter={(val) => `Time: ${Number(val).toFixed(1)}s`}
-                      formatter={(val, name) => {
-                        if (name === 'calibrated_probability') return [`${(val * 100).toFixed(2)}%`, 'Probability'];
-                        return [val, name];
-                      }}
+                      formatter={(val, name) => [`${(Number(val) * 100).toFixed(1)}%`, name]}
                     />
+                    <Legend wrapperStyle={{ paddingTop: '12px', fontSize: '12px', color: '#a1a1aa' }} />
                     <ReferenceLine y={0.35} stroke="#10b981" strokeDasharray="3 3" opacity={0.3} />
                     <ReferenceLine y={0.65} stroke="#ef4444" strokeDasharray="3 3" opacity={0.3} />
-                    <Line 
-                      type="monotone" 
-                      dataKey="calibrated_probability" 
-                      stroke="#f4f4f5" 
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 6, fill: '#f4f4f5' }}
-                    />
+
+                    {/* All signals as dim dashed reference lines */}
+                    <Line type="monotone" dataKey="per_expert_probability.wavlm"  name="WavLM"        stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'wavlm'  ? 0 : 0.45} />
+                    <Line type="monotone" dataKey="per_expert_probability.hybrid" name="LFCC-LCNN"    stroke="#ec4899" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'hybrid' ? 0 : 0.45} />
+                    <Line type="monotone" dataKey="per_expert_probability.ssl"    name="SSL"          stroke="#eab308" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'ssl'    ? 0 : 0.45} />
+                    <Line type="monotone" dataKey="lr_probability"                name="LR Fusion"    stroke="#a855f7" strokeWidth={1.5} strokeDasharray="4 4" dot={false} opacity={selectedMode === 'lr_fusion'      ? 0 : 0.45} />
+                    <Line type="monotone" dataKey="heuristic_avg_probability"     name="LFCC+SSL Avg" stroke="#f97316" strokeWidth={1.5} strokeDasharray="4 4" dot={false} opacity={selectedMode === 'heuristic_avg'  ? 0 : 0.45} />
+
+                    {/* Selected mode promoted to bold white primary line */}
+                    {(() => {
+                      const mode = FUSION_MODES.find(m => m.key === selectedMode);
+                      if (!mode) return null;
+                      return (
+                        <Line
+                          type="monotone"
+                          dataKey={mode.dataKey}
+                          name={`▶ ${mode.label} (Primary)`}
+                          stroke="#f4f4f5"
+                          strokeWidth={3}
+                          dot={false}
+                          activeDot={{ r: 6, fill: '#f4f4f5' }}
+                        />
+                      );
+                    })()}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             </CardContent>
           </Card>
+
         </div>
       )}
     </div>

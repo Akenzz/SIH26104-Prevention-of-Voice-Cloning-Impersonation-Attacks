@@ -20,6 +20,15 @@ from messages import build_message
 from policy import PolicyConfig, decide
 from smoothing import ExponentialMovingAverage
 
+import joblib
+from config import ARTIFACTS_DIR
+
+_LR_MODEL = None
+try:
+    _LR_MODEL = joblib.load(ARTIFACTS_DIR / "fusion_lr.joblib")
+except Exception as e:
+    logger.warning(f"Could not load LR model: {e}")
+
 logger = logging.getLogger("realtime_backend.pipeline")
 
 VALID_ENCODINGS = {"pcm_s16le", "s16le", "int16", "pcm_f32le", "f32le", "float32"}
@@ -51,6 +60,7 @@ class WindowResult:
     probability: float | None
     quality: QualityResult
     expert_probabilities: dict[str, float] = field(default_factory=dict)
+    lr_probability: float | None = None
 
 
 def process_single_window(
@@ -104,6 +114,28 @@ def process_single_window(
         cal = (expert_calibrators or {}).get(name, calibrator)
         expert_probabilities[name] = float(cal.probability(float(score["logit"])))
 
+    # Calculate LR probability for frontend visualization if available.
+    # When mode == lr_fusion, this also becomes the primary decision probability.
+    lr_probability = None
+    if _LR_MODEL is not None and "wavlm" in scores and "hybrid" in scores and "ssl" in scores:
+        w_log = float(scores["wavlm"]["logit"])
+        h_log = float(scores["hybrid"]["logit"])
+        s_log = float(scores["ssl"]["logit"])
+        try:
+            lr_probability = float(_LR_MODEL.predict_proba(np.array([[w_log, h_log, s_log]]))[0, 1])
+        except Exception:
+            pass
+
+    if settings.fusion_mode == "lr_fusion":
+        if lr_probability is not None:
+            probability = lr_probability
+        # else fall back to the fused logit already computed
+    elif settings.fusion_mode == "heuristic_avg":
+        p_l = expert_probabilities.get("hybrid", 0.0)
+        p_s = expert_probabilities.get("ssl", 0.0)
+        probability = float((p_l + p_s) / 2.0)
+        fused = None
+
     # For single-shot (no smoothing), use the raw probability
     if smoothed_probability is None:
         smoothed_probability = probability
@@ -116,7 +148,7 @@ def process_single_window(
         config=policy,
     )
     return WindowResult(
-        state, action, flag, scores, fused, probability, quality, expert_probabilities
+        state, action, flag, scores, fused, probability, quality, expert_probabilities, lr_probability
     )
 
 
@@ -135,6 +167,7 @@ class ConnectionState:
     # drifts the stream and corrupts the audio before any expert sees it.
     resampler: StreamingPolyphaseResampler | None = None
     ema: ExponentialMovingAverage = field(init=False)
+    lr_ema: ExponentialMovingAverage = field(init=False)
     expert_emas: dict[str, ExponentialMovingAverage] = field(init=False)
     out_seq: int = 0
     windows_scored: int = 0
@@ -143,6 +176,7 @@ class ConnectionState:
 
     def __post_init__(self) -> None:
         self.ema = ExponentialMovingAverage(self.settings.ema_alpha)
+        self.lr_ema = ExponentialMovingAverage(self.settings.ema_alpha)
         self.expert_emas = {
             name: ExponentialMovingAverage(self.settings.ema_alpha) for name in self.experts
         }
@@ -167,6 +201,7 @@ class ConnectionState:
         self.buffer = RingBuffer(self.settings.window_samples, self.settings.hop_samples)
         self.resampler = StreamingPolyphaseResampler(sample_rate, self.settings.target_sample_rate)
         self.ema.reset()
+        self.lr_ema.reset()
         for e in self.expert_emas.values():
             e.reset()
         self.out_seq = 0
@@ -341,6 +376,7 @@ class ConnectionState:
         if self.resampler is not None:
             self.resampler.reset()
         self.ema.reset()
+        self.lr_ema.reset()
         for e in self.expert_emas.values():
             e.reset()
         self.windows_scored = 0
@@ -373,6 +409,7 @@ class ConnectionState:
             )
 
         smoothed = self.ema.update(result.probability)
+        lr_smoothed = self.lr_ema.update(result.lr_probability) if result.lr_probability is not None else None
         self.windows_scored += 1
 
         # Smooth each expert on its own track so the per-model cards are as
@@ -401,6 +438,7 @@ class ConnectionState:
             window_index=self.windows_scored,
             t0=t0,
             expert_probabilities=expert_smoothed,
+            lr_probability=lr_smoothed,
         )
 
     def _unavailable(
@@ -430,6 +468,7 @@ class ConnectionState:
             window_index=window_index,
             t0=t0,
             expert_probabilities={},
+            lr_probability=None,
         )
 
     def _emit(
@@ -445,6 +484,7 @@ class ConnectionState:
         window_index: int,
         t0: float,
         expert_probabilities: dict[str, float],
+        lr_probability: float | None,
     ) -> dict[str, Any]:
         self.out_seq += 1
         latency_ms = (time.perf_counter() - t0) * 1000.0
@@ -464,6 +504,7 @@ class ConnectionState:
             window_index=window_index,
             latency_ms=latency_ms,
             expert_probabilities=expert_probabilities,
+            lr_probability=lr_probability,
             expert_calibrators=self.expert_calibrators,
             policy=self.policy,
         )

@@ -44,23 +44,11 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
                 name="hybrid",
             )
             continue
-        if key == "hybrid_nc":
-            # Same LFCC-LCNN architecture as `hybrid`, warm-started 5 epochs on
-            # the hybrid mix + 12 modern TTS/VC clips. LOCAL-ONLY checkpoint
-            # (config.HUB_EXPERTS["hybrid_nc"]["local_only"] = True): loaded
-            # straight from model_cache/, never fetched from the Hub. Reads with
-            # its OWN calibrator (artifacts/calibrator_hybrid_newclips.json);
-            # its logit scale differs from `hybrid`.
-            from .lfcc import LFCCLCNNExpert
-
-            loaded[key] = LFCCLCNNExpert(
-                cache_dir=settings.model_cache_dir,
-                device=settings.device,
-                hub_key="hybrid_nc",
-                name="hybrid_nc",
-            )
+        if key == "ssl":
+            from .ssl_antispoof import SSLExpert
+            loaded[key] = SSLExpert()
             continue
-        raise ValueError(f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid, hybrid_nc")
+        raise ValueError(f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid, ssl")
     if not loaded:
         raise ValueError("No experts loaded")
     return loaded
