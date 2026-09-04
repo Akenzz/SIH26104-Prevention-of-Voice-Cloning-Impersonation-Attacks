@@ -53,22 +53,7 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
 
             loaded[key] = SSLExpert(cache_dir=settings.model_cache_dir, device=settings.device)
             continue
-        if key == "hybrid_nc":
-            # Same LFCC-LCNN class as `hybrid`, warm-start fine-tuned on the
-            # new modern-engine clips. Checkpoint is now on HF at
-            # sarosh22/Hybrid_new and is downloaded by ensure_checkpoint on
-            # first run. DISPLAY-ONLY: scored and calibrated for its own side
-            # card, but NOT read by the lr_fusion decision, which uses the
-            # fixed [wavlm, hybrid, ssl] vector.
-            from .lfcc import LFCCLCNNExpert
 
-            loaded[key] = LFCCLCNNExpert(
-                cache_dir=settings.model_cache_dir,
-                device=settings.device,
-                hub_key="hybrid_nc",
-                name="hybrid_nc",
-            )
-            continue
         if key == "hybrid_br":
             # Same LFCC-LCNN class again, local-only, but trained WITH a 7 kHz
             # parity band gate. The gate lives in the checkpoint and is applied

@@ -53,45 +53,22 @@ HUB_EXPERTS = {
     # Expert 1 (Person A): WavLM Base+ front-end + classifier head.
     "wavlm": {
         "repo_id": "Akenzz/SIH-Models",
-        "filename": "wavlm_best_model_v4.pt",
-        "local_name": "wavlm_best_model_v4.pt",
+        "filename": "wavlm_best_model_v5.pt",
+        "local_name": "wavlm_best_model_v5.pt",
     },
-    # Expert 2: LFCC-LCNN trained on the HYBRID clean-model mix — 6 languages
-    # (hi/en/kn/ml/mr/ta), ~20k bonafide / ~20k spoof base clips VAD-sliced to
-    # 43.8k 4-10s chunks, 130 spoof generators, bonafide<->spoof paired WITHIN
-    # each language so corpus/channel cannot act as a label shortcut, plus
-    # equal-on-both-classes train-time channel augmentation.
-    # First checkpoint to hold up on UNSEEN generators: dev EER 2.42%, held-out
-    # ood_en_mlaad (25 unseen gens) 4.58%, ood_itw (real-world, held-out
-    # speakers) 9.73%, pooled eval_ood 5.91%.
-    # Needs its OWN calibrator (artifacts/calibrator_hybrid_clean.json).
-    # repo_id is the canonical name; huggingface.co/sarosh22/hybrid 307-redirects
-    # here, so both spellings resolve, but this one does not depend on the alias.
+    # Expert 2: LFCC-LCNN Hybrid, warm-start fine-tuned 5 epochs on the corpus +
+    # 12 modern-engine clips. Uploaded to sarosh22/Hybrid_new on HF; ensure_checkpoint
+    # pulls it on first run and caches under model_cache/ like the other Hub experts.
     "hybrid": {
-        "repo_id": "sarosh22/Expert2",
-        "filename": "hybrid_clean.pth",
-        "local_name": "hybrid_clean.pth",
+        "repo_id": "sarosh22/Hybrid_new",
+        "filename": "hybrid_clean_plus_newclips_final.pth",
+        "local_name": "hybrid_clean_plus_newclips_final.pth",
     },
     # Expert 3: TakHemlata SSL
     "ssl": {
         "repo_id": "Akenzz/SIH-Models",
         "filename": "best_SSL_model_LA.pth",
         "local_name": "best_SSL_model_LA.pth",
-    },
-    # Expert 2b: the SAME LFCC-LCNN hybrid architecture as `hybrid`, warm-start
-    # fine-tuned 5 epochs on the corpus + Amogh's 12 modern-engine clips
-    # (fireredtts / omni / sopro / styletts2 / chatterbox / qwen ...). NOT new
-    # features -- the identical 60-dim LFCC+deltas front-end, only re-weighted
-    # LCNN. Flips 6/8 previously-missed engines to caught at a small in-domain
-    # cost (dev EER 2.42% -> 2.93%); see memory/newclips-finetune-result.md.
-    # Uploaded to sarosh22/Hybrid_new on HF; ensure_checkpoint pulls it on first
-    # run and caches under model_cache/ like the other Hub experts.
-    # DISPLAY-ONLY: not part of the lr_fusion decision (pipeline.py reads a
-    # fixed [wavlm, hybrid, ssl] vector), so this is a side card, not the verdict.
-    "hybrid_nc": {
-        "repo_id": "sarosh22/Hybrid_new",
-        "filename": "hybrid_clean_plus_newclips_final.pth",
-        "local_name": "hybrid_clean_plus_newclips_final.pth",
     },
     # Expert 2c: the bandwidth-robust retrain. Same architecture and data as
     # hybrid_nc, but trained with a 7 kHz parity band gate on BOTH classes and
@@ -120,9 +97,8 @@ HUB_EXPERTS = {
 # ASCII only — these are echoed straight into JSON.
 EXPERT_LABELS = {
     "wavlm": "Expert-1: WavLM Base+",
-    "hybrid": "Expert-2: LFCC-LCNN Hybrid",
+    "hybrid": "Expert-2: LFCC-LCNN Hybrid (Fine-Tuned)",
     "ssl": "Expert-3: TakHemlata SSL",
-    "hybrid_nc": "Expert-2b: LFCC-LCNN Hybrid + new engines",
     "hybrid_br": "Expert-2c: LFCC-LCNN Hybrid (bandwidth-robust)",
 }
 
@@ -132,11 +108,8 @@ EXPERT_LABELS = {
 # show a meaningful probability for BOTH models side by side.
 EXPERT_CALIBRATORS = {
     "wavlm": ARTIFACTS_DIR / "platt_v4.json",
-    "hybrid": ARTIFACTS_DIR / "calibrator_hybrid_clean.json",
+    "hybrid": ARTIFACTS_DIR / "calibrator_hybrid_newclips.json",
     "ssl": ARTIFACTS_DIR / "platt_ssl.json",
-    # hybrid_nc runs a HIGHER spoof-sensitivity, so its logits sit on their own
-    # scale -- fitted with scripts/fit_calibrator.py on the hybrid dev split.
-    "hybrid_nc": ARTIFACTS_DIR / "calibrator_hybrid_newclips.json",
     # hybrid_br is calibrated on GATED dev audio (lfcc-detector/fit_calibrator_br.py,
     # speaker-disjoint half/half: held-out EER 7.84%, ECE 0.061). A calibrator
     # fitted on ungated audio would map logits this model never produces in
@@ -157,14 +130,8 @@ class Settings:
     target_sample_rate: int = TARGET_SAMPLE_RATE
     window_sec: float = WINDOW_SEC
     hop_sec: float = HOP_SEC
-    # Defaults are the shipped demo config: all four experts are scored and get
-    # their own side card, and the risk band comes from `lr_fusion` over the
-    # fixed [wavlm, hybrid, ssl] vector. `hybrid_nc` is DISPLAY-ONLY -- it shows
-    # its own calibrated probability but does not feed the decision. `python
-    # server.py` with no env vars set is a working install; env vars only exist
-    # for experiments.
-    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid,ssl,hybrid_nc"))
-    fusion_mode: str = os.environ.get("FUSION_MODE", "lr_fusion")
+    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid,ssl"))
+    fusion_mode: str = os.environ.get("FUSION_MODE", "heuristic_avg")
     single_expert: str = os.environ.get("SINGLE_EXPERT", "hybrid")
     ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.3"))
     device: str = os.environ.get("DEVICE", "cpu")

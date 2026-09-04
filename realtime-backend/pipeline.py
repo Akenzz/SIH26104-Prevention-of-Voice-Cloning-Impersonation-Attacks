@@ -21,19 +21,7 @@ from messages import build_message
 from policy import PolicyConfig, decide
 from smoothing import ExponentialMovingAverage
 
-import joblib
-from config import ARTIFACTS_DIR
 
-logger = logging.getLogger("realtime_backend.pipeline")
-
-_LR_MODEL = None
-try:
-    _LR_MODEL = joblib.load(ARTIFACTS_DIR / "fusion_lr.joblib")
-except Exception as e:
-    # Missing/unreadable LR model must NOT crash import: the pipeline still runs
-    # every expert and shows each side card; only the lr_fusion headline degrades
-    # (it falls back to the calibrated single-expert logit).
-    logger.warning(f"Could not load LR model: {e}")
 
 VALID_ENCODINGS = {"pcm_s16le", "s16le", "int16", "pcm_f32le", "f32le", "float32"}
 
@@ -137,43 +125,13 @@ def process_single_window(
         cal = (expert_calibrators or {}).get(name, calibrator)
         expert_probabilities[name] = float(cal.probability(float(score["logit"])))
 
-    # Calculate LR probability for frontend visualization if available.
-    # When mode == lr_fusion, this also becomes the primary decision probability.
-    lr_probability = None
-    if _LR_MODEL is not None and "wavlm" in scores and "hybrid" in scores and "ssl" in scores:
-        w_log = float(scores["wavlm"]["logit"])
-        h_log = float(scores["hybrid"]["logit"])
-        s_log = float(scores["ssl"]["logit"])
-        try:
-            lr_probability = float(_LR_MODEL.predict_proba(np.array([[w_log, h_log, s_log]]))[0, 1])
-        except Exception:
-            pass
-
-    if settings.fusion_mode == "lr_fusion":
-        if lr_probability is not None:
-            probability = lr_probability
-
-            # ── Hybrid Override Rule ─────────────────────────────────────────
-            # WavLM was trained on a fixed set of TTS systems; for unseen
-            # generators it often votes bonafide (negative logit) which drags
-            # the LR score below threshold even when Hybrid and SSL both
-            # strongly agree it is spoof.
-            # When LFCC-Hybrid is VERY confident (logit > 10) AND SSL also
-            # agrees (logit > 1), we trust Hybrid unconditionally.
-            # The SSL guard prevents triggering on real audio where Hybrid
-            # alone is occasionally high due to compression artifacts.
-            h_log = float(scores.get("hybrid", {}).get("logit", 0.0))
-            s_log = float(scores.get("ssl",    {}).get("logit", 0.0))
-            _HYBRID_LOGIT_GATE = float(os.environ.get("HYBRID_LOGIT_GATE", "10.0"))
-            _SSL_CONFIRM_GATE  = float(os.environ.get("SSL_CONFIRM_GATE",  "0.5"))
-            if h_log > _HYBRID_LOGIT_GATE and s_log > _SSL_CONFIRM_GATE:
-                # Override: LFCC is very loud and SSL confirms — must be spoof
-                probability = max(probability, 0.85)
-        # else fall back to the fused logit already computed
-    elif settings.fusion_mode == "heuristic_avg":
+    if settings.fusion_mode == "heuristic_avg":
+        p_w = expert_probabilities.get("wavlm", 0.0)
         p_l = expert_probabilities.get("hybrid", 0.0)
         p_s = expert_probabilities.get("ssl", 0.0)
-        probability = float((p_l + p_s) / 2.0)
+        
+        # Simple average of all three expert probabilities
+        probability = float((p_w + p_l + p_s) / 3.0)
         fused = None
 
 
@@ -189,7 +147,7 @@ def process_single_window(
         config=policy,
     )
     return WindowResult(
-        state, action, flag, scores, fused, probability, quality, expert_probabilities, lr_probability
+        state, action, flag, scores, fused, probability, quality, expert_probabilities
     )
 
 

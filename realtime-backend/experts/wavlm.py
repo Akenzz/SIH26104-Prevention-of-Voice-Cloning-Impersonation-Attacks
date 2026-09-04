@@ -42,7 +42,7 @@ _LOCAL_CHECKPOINT = (
     Path(__file__).resolve().parent.parent.parent   # repo root
     / "wavlm-base-plus"
     / "checkpoints"
-    / "best_model_v4.pt"
+    / "best_model_v5.pt"
 )
 
 

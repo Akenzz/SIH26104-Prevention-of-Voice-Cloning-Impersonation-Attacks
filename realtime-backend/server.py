@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import io
+import warnings
+warnings.filterwarnings("ignore")
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,9 +32,15 @@ from policy import band, load_policy
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    format="%(message)s",
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("realtime_backend.calibration").setLevel(logging.WARNING)
+logging.getLogger("realtime_backend.experts").setLevel(logging.WARNING)
+logging.getLogger("realtime_backend.pipeline").setLevel(logging.WARNING)
+logging.getLogger("fairseq").setLevel(logging.WARNING)
 logger = logging.getLogger("realtime_backend")
+logger.setLevel(logging.WARNING) # Suppress default backend logger as well
 
 settings = load_settings()
 experts: dict[str, Any] = {}
@@ -50,21 +58,18 @@ async def lifespan(_app: FastAPI):
     global experts
     settings.model_cache_dir.mkdir(parents=True, exist_ok=True)
     if settings.prefetch_models:
-        logger.info("PREFETCH_MODELS=1: downloading Hub checkpoints into %s", settings.model_cache_dir)
         prefetch_hub_files(settings.model_cache_dir)
-    logger.info("Loading experts: %s (fusion_mode=%s)", settings.experts, settings.fusion_mode)
+    print("Starting to load backend models... (this takes ~2-3 mins)")
     experts = load_experts(settings)
-    # Reject a calibrator fitted on a different band than its expert serves. Both
-    # directions produce in-range but wrong probabilities, so it has to fail here.
+    for key in experts:
+        print(f"loaded model {key}")
+        
     assert_calibrator_gates_match(EXPERT_CALIBRATORS, experts)
-    # And in single-expert mode, reject a decision calibrator that belongs to a
-    # DIFFERENT expert than the one being read (pipeline.py applies the global
-    # calibrator to SINGLE_EXPERT's raw logit).
     assert_single_expert_calibrator(
         settings.fusion_mode, settings.single_expert,
         settings.calibrator_path, EXPERT_CALIBRATORS,
     )
-    logger.info("Backend ready on experts=%s", list(experts))
+    print("all 3 loaded, server started!")
     yield
 
 
@@ -232,9 +237,12 @@ async def predict_file(file: UploadFile = File(...)):
             "start_time_sec": start_time_sec,
             "risk_state": state,
             "calibrated_probability": smoothed if smoothed is not None else probability,
-            "lr_probability": result.lr_probability,
             "heuristic_avg_probability": (
-                (result.expert_probabilities.get("hybrid", 0.0) + result.expert_probabilities.get("ssl", 0.0)) / 2.0
+                (
+                    result.expert_probabilities.get("wavlm", 0.0) +
+                    result.expert_probabilities.get("hybrid", 0.0) + 
+                    result.expert_probabilities.get("ssl", 0.0)
+                ) / 3.0
                 if result.expert_probabilities else None
             ),
             "raw_per_expert_scores": {k: v["logit"] for k, v in scores.items()} if scores else {},
@@ -381,4 +389,4 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("server:app", host=settings.host, port=settings.port, reload=False)
+    uvicorn.run("server:app", host=settings.host, port=settings.port, reload=False, log_level="warning")

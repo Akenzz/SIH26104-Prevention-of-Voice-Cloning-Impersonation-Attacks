@@ -8,8 +8,7 @@ import { Spinner } from '../components/ui/Spinner';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 const FUSION_MODES = [
-  { key: 'lr_fusion',      label: 'LR Fusion (3-Expert)',    dataKey: 'lr_probability',           color: '#a855f7' },
-  { key: 'heuristic_avg', label: 'LFCC + SSL Avg',          dataKey: 'heuristic_avg_probability', color: '#f97316' },
+  { key: 'heuristic_avg', label: 'Simple Average (3-Expert)', dataKey: 'heuristic_avg_probability', color: '#f97316' },
   { key: 'wavlm',         label: 'WavLM Only',              dataKey: 'per_expert_probability.wavlm', color: '#3b82f6' },
   { key: 'hybrid',        label: 'LFCC-LCNN Only',          dataKey: 'per_expert_probability.hybrid', color: '#ec4899' },
   { key: 'ssl',           label: 'TakHemlata SSL Only',     dataKey: 'per_expert_probability.ssl',   color: '#eab308' },
@@ -22,7 +21,7 @@ export default function FileAnalysis() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [expandedExpert, setExpandedExpert] = useState(null);
-  const [selectedMode, setSelectedMode] = useState('lr_fusion'); // which signal drives overall line
+  const [selectedMode, setSelectedMode] = useState('heuristic_avg'); // which signal drives overall line
   const [health, setHealth] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -388,8 +387,7 @@ export default function FileAnalysis() {
                     <Line type="monotone" dataKey="per_expert_probability.wavlm"  name="WavLM"        stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'wavlm'  ? 0 : 0.45} />
                     <Line type="monotone" dataKey="per_expert_probability.hybrid" name="LFCC-LCNN"    stroke="#ec4899" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'hybrid' ? 0 : 0.45} />
                     <Line type="monotone" dataKey="per_expert_probability.ssl"    name="SSL"          stroke="#eab308" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'ssl'    ? 0 : 0.45} />
-                    <Line type="monotone" dataKey="lr_probability"                name="LR Fusion"    stroke="#a855f7" strokeWidth={1.5} strokeDasharray="4 4" dot={false} opacity={selectedMode === 'lr_fusion'      ? 0 : 0.45} />
-                    <Line type="monotone" dataKey="heuristic_avg_probability"     name="LFCC+SSL Avg" stroke="#f97316" strokeWidth={1.5} strokeDasharray="4 4" dot={false} opacity={selectedMode === 'heuristic_avg'  ? 0 : 0.45} />
+                    <Line type="monotone" dataKey="heuristic_avg_probability"     name="Simple Average" stroke="#f97316" strokeWidth={1.5} strokeDasharray="4 4" dot={false} opacity={selectedMode === 'heuristic_avg'  ? 0 : 0.45} />
 
                     {/* Selected mode promoted to bold white primary line */}
                     {(() => {
