@@ -12,9 +12,10 @@ logger = logging.getLogger("realtime_backend.experts")
 def load_experts(settings: Settings) -> dict[str, Expert]:
     """Instantiate experts named in settings.experts.
 
-    Two real experts are wired: `wavlm` (Person A's WavLM Base+) and `hybrid`
-    (the 6-language LFCC-LCNN clean-model checkpoint). Both pull their weights
-    from Hugging Face on first run and are cached under model_cache/.
+    Three Hub experts are wired: `wavlm` (WavLM Base+), `hybrid` (6-language
+    LFCC-LCNN clean-model), and `hybrid_nc` (same arch, fine-tuned on 12 modern
+    engines, hosted at sarosh22/Hybrid_new). All pull their weights from
+    Hugging Face on first run and are cached under model_cache/.
     Requesting an unwired name fails at startup instead of silently scoring.
     """
     loaded: dict[str, Expert] = {}
@@ -53,11 +54,12 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
             loaded[key] = SSLExpert(cache_dir=settings.model_cache_dir, device=settings.device)
             continue
         if key == "hybrid_nc":
-            # Same LFCC-LCNN class as `hybrid`, loaded from a local-only
-            # checkpoint (config.HUB_EXPERTS["hybrid_nc"], warm-start fine-tune
-            # on the new modern-engine clips). DISPLAY-ONLY: scored and
-            # calibrated for its own side card, but NOT read by the lr_fusion
-            # decision, which uses the fixed [wavlm, hybrid, ssl] vector.
+            # Same LFCC-LCNN class as `hybrid`, warm-start fine-tuned on the
+            # new modern-engine clips. Checkpoint is now on HF at
+            # sarosh22/Hybrid_new and is downloaded by ensure_checkpoint on
+            # first run. DISPLAY-ONLY: scored and calibrated for its own side
+            # card, but NOT read by the lr_fusion decision, which uses the
+            # fixed [wavlm, hybrid, ssl] vector.
             from .lfcc import LFCCLCNNExpert
 
             loaded[key] = LFCCLCNNExpert(

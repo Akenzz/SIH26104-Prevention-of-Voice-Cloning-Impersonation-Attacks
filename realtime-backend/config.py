@@ -84,16 +84,14 @@ HUB_EXPERTS = {
     # features -- the identical 60-dim LFCC+deltas front-end, only re-weighted
     # LCNN. Flips 6/8 previously-missed engines to caught at a small in-domain
     # cost (dev EER 2.42% -> 2.93%); see memory/newclips-finetune-result.md.
-    # local_only: the checkpoint has no Hub twin -- it ships in model_cache/ and
-    # loads directly, skipping ensure_checkpoint so the HF HEAD/size staleness
-    # check can never clobber a file it has no remote to compare against.
+    # Uploaded to sarosh22/Hybrid_new on HF; ensure_checkpoint pulls it on first
+    # run and caches under model_cache/ like the other Hub experts.
     # DISPLAY-ONLY: not part of the lr_fusion decision (pipeline.py reads a
     # fixed [wavlm, hybrid, ssl] vector), so this is a side card, not the verdict.
     "hybrid_nc": {
-        "repo_id": "local",
+        "repo_id": "sarosh22/Hybrid_new",
         "filename": "hybrid_clean_plus_newclips_final.pth",
         "local_name": "hybrid_clean_plus_newclips_final.pth",
-        "local_only": True,
     },
     # Expert 2c: the bandwidth-robust retrain. Same architecture and data as
     # hybrid_nc, but trained with a 7 kHz parity band gate on BOTH classes and
