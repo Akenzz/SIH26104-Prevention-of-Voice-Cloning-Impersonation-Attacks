@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -129,12 +130,30 @@ def process_single_window(
     if settings.fusion_mode == "lr_fusion":
         if lr_probability is not None:
             probability = lr_probability
+
+            # ── Hybrid Override Rule ─────────────────────────────────────────
+            # WavLM was trained on a fixed set of TTS systems; for unseen
+            # generators it often votes bonafide (negative logit) which drags
+            # the LR score below threshold even when Hybrid and SSL both
+            # strongly agree it is spoof.
+            # When LFCC-Hybrid is VERY confident (logit > 10) AND SSL also
+            # agrees (logit > 1), we trust Hybrid unconditionally.
+            # The SSL guard prevents triggering on real audio where Hybrid
+            # alone is occasionally high due to compression artifacts.
+            h_log = float(scores.get("hybrid", {}).get("logit", 0.0))
+            s_log = float(scores.get("ssl",    {}).get("logit", 0.0))
+            _HYBRID_LOGIT_GATE = float(os.environ.get("HYBRID_LOGIT_GATE", "10.0"))
+            _SSL_CONFIRM_GATE  = float(os.environ.get("SSL_CONFIRM_GATE",  "0.5"))
+            if h_log > _HYBRID_LOGIT_GATE and s_log > _SSL_CONFIRM_GATE:
+                # Override: LFCC is very loud and SSL confirms — must be spoof
+                probability = max(probability, 0.85)
         # else fall back to the fused logit already computed
     elif settings.fusion_mode == "heuristic_avg":
         p_l = expert_probabilities.get("hybrid", 0.0)
         p_s = expert_probabilities.get("ssl", 0.0)
         probability = float((p_l + p_s) / 2.0)
         fused = None
+
 
     # For single-shot (no smoothing), use the raw probability
     if smoothed_probability is None:

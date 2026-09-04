@@ -46,7 +46,7 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
             continue
         if key == "ssl":
             from .ssl_antispoof import SSLExpert
-            loaded[key] = SSLExpert()
+            loaded[key] = SSLExpert(cache_dir=settings.model_cache_dir, device=settings.device)
             continue
         raise ValueError(f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid, ssl")
     if not loaded:
