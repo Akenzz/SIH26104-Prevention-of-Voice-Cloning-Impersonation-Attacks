@@ -78,6 +78,44 @@ HUB_EXPERTS = {
         "filename": "best_SSL_model_LA.pth",
         "local_name": "best_SSL_model_LA.pth",
     },
+    # Expert 2b: the SAME LFCC-LCNN hybrid architecture as `hybrid`, warm-start
+    # fine-tuned 5 epochs on the corpus + Amogh's 12 modern-engine clips
+    # (fireredtts / omni / sopro / styletts2 / chatterbox / qwen ...). NOT new
+    # features -- the identical 60-dim LFCC+deltas front-end, only re-weighted
+    # LCNN. Flips 6/8 previously-missed engines to caught at a small in-domain
+    # cost (dev EER 2.42% -> 2.93%); see memory/newclips-finetune-result.md.
+    # local_only: the checkpoint has no Hub twin -- it ships in model_cache/ and
+    # loads directly, skipping ensure_checkpoint so the HF HEAD/size staleness
+    # check can never clobber a file it has no remote to compare against.
+    # DISPLAY-ONLY: not part of the lr_fusion decision (pipeline.py reads a
+    # fixed [wavlm, hybrid, ssl] vector), so this is a side card, not the verdict.
+    "hybrid_nc": {
+        "repo_id": "local",
+        "filename": "hybrid_clean_plus_newclips_final.pth",
+        "local_name": "hybrid_clean_plus_newclips_final.pth",
+        "local_only": True,
+    },
+    # Expert 2c: the bandwidth-robust retrain. Same architecture and data as
+    # hybrid_nc, but trained with a 7 kHz parity band gate on BOTH classes and
+    # ALL splits, which removes the resampler artifact the other LFCC experts
+    # decide on: training resampled with librosa/soxr (brickwalls 7.9-8 kHz),
+    # this backend resamples with scipy (does not), and the corpus's native
+    # sample rates were split by label -- so "hole near Nyquist" was a label
+    # proxy and in-training generators read bonafide live.
+    # Measured: mean |scipy - librosa| verdict gap 13.35 logits (hybrid) and
+    # 5.25 (hybrid_nc) -> 0.03 here, i.e. the verdict no longer depends on the
+    # resampler. Local spoof recall 7/7 vs 0/7 and 6/7.
+    # Its dev EER (8.88%) looks worse than hybrid's 2.42% because 2.42% was
+    # inflated by the artifact -- the same shipped weights score 18.97% once the
+    # band is gated. Do not compare the two numbers directly.
+    # The 7000 Hz gate is stored INSIDE the checkpoint and applied by
+    # experts/lfcc.py at score time; serving this ungated biases it spoofward.
+    "hybrid_br": {
+        "repo_id": "local",
+        "filename": "hybrid_br_best.pth",
+        "local_name": "hybrid_br_best.pth",
+        "local_only": True,
+    },
 }
 
 # Human-facing labels for the frontend, so the UI never has to hardcode names.
@@ -86,6 +124,8 @@ EXPERT_LABELS = {
     "wavlm": "Expert-1: WavLM Base+",
     "hybrid": "Expert-2: LFCC-LCNN Hybrid",
     "ssl": "Expert-3: TakHemlata SSL",
+    "hybrid_nc": "Expert-2b: LFCC-LCNN Hybrid + new engines",
+    "hybrid_br": "Expert-2c: LFCC-LCNN Hybrid (bandwidth-robust)",
 }
 
 # Per-expert Platt calibrators. Each expert's logits live on their own scale, so
@@ -96,6 +136,14 @@ EXPERT_CALIBRATORS = {
     "wavlm": ARTIFACTS_DIR / "platt_v4.json",
     "hybrid": ARTIFACTS_DIR / "calibrator_hybrid_clean.json",
     "ssl": ARTIFACTS_DIR / "platt_ssl.json",
+    # hybrid_nc runs a HIGHER spoof-sensitivity, so its logits sit on their own
+    # scale -- fitted with scripts/fit_calibrator.py on the hybrid dev split.
+    "hybrid_nc": ARTIFACTS_DIR / "calibrator_hybrid_newclips.json",
+    # hybrid_br is calibrated on GATED dev audio (lfcc-detector/fit_calibrator_br.py,
+    # speaker-disjoint half/half: held-out EER 7.84%, ECE 0.061). A calibrator
+    # fitted on ungated audio would map logits this model never produces in
+    # service, so this file and the checkpoint's gate must stay in step.
+    "hybrid_br": ARTIFACTS_DIR / "calibrator_hybrid_br.json",
 }
 
 
@@ -111,10 +159,13 @@ class Settings:
     target_sample_rate: int = TARGET_SAMPLE_RATE
     window_sec: float = WINDOW_SEC
     hop_sec: float = HOP_SEC
-    # Defaults are the shipped demo config: both experts scored and reported,
-    # `hybrid` drives the risk band. `python server.py` with no env vars set is a
-    # working install; env vars only exist for experiments.
-    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid,ssl"))
+    # Defaults are the shipped demo config: all four experts are scored and get
+    # their own side card, and the risk band comes from `lr_fusion` over the
+    # fixed [wavlm, hybrid, ssl] vector. `hybrid_nc` is DISPLAY-ONLY -- it shows
+    # its own calibrated probability but does not feed the decision. `python
+    # server.py` with no env vars set is a working install; env vars only exist
+    # for experiments.
+    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid,ssl,hybrid_nc"))
     fusion_mode: str = os.environ.get("FUSION_MODE", "lr_fusion")
     single_expert: str = os.environ.get("SINGLE_EXPERT", "hybrid")
     ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.3"))

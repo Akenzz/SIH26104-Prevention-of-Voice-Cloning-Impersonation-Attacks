@@ -2,8 +2,8 @@
 
 Detects synthetic and voice-cloned speech in real time. A React dashboard streams
 microphone audio (or uploads a file) to a FastAPI backend, which windows the audio,
-scores it with two independently trained detectors, calibrates each score into a
-probability, smooths it, and returns a risk band.
+scores it with several independently trained detectors, calibrates each score into
+a probability, smooths it, and returns a risk band.
 
 **Not** identity verification. It answers "does this audio look machine-generated?",
 not "is this person who they claim to be".
@@ -17,10 +17,11 @@ not "is this person who they claim to be".
 
 Higher logit and higher probability always mean **more likely synthetic**.
 
-## The two models
+## The models
 
-Both are downloaded automatically from Hugging Face on first run and cached in
-`realtime-backend/model_cache/`. No token, no manual download, no env vars.
+The two primary experts are downloaded automatically from Hugging Face on first
+run and cached in `realtime-backend/model_cache/`. No token, no manual download,
+no env vars. `realtime-backend/config.py::HUB_EXPERTS` is the authoritative list.
 
 | # | Key | Hugging Face | Architecture | Role |
 |---|---|---|---|---|
@@ -29,14 +30,39 @@ Both are downloaded automatically from Hugging Face on first run and cached in
 
 Each expert has its own Platt calibrator, because their logits live on different
 scales — one shared calibrator would misread the other model. The displayed
-risk band comes from the decision expert (`hybrid`) only; Expert-1's probability
-is shown alongside for comparison.
+risk band comes from the decision expert only; the other experts' probabilities
+are shown alongside for comparison.
 
-Expert-2 numbers: dev EER 2.42%, held-out **unseen-generator** MLAAD 4.58%,
-real-world in-the-wild 9.73%, pooled out-of-domain 5.91%. Trained on ~20k
-bonafide / ~20k spoof base clips (43.8k VAD chunks, 130 spoof generators) with
-bonafide↔spoof paired *within* each language so corpus or channel cannot act as
-a label shortcut.
+> **Read [CALIBRATION-AND-RESAMPLING.md](CALIBRATION-AND-RESAMPLING.md) before
+> retraining a model, changing any audio preprocessing, or swapping a calibrator
+> artifact.** Those two areas have produced every silent failure this project has
+> had — wrong answers that still return a valid probability, keep the stream
+> running, and look completely normal on the dashboard. It also lists which
+> calibrator artifact belongs to which expert, which is not guessable from the
+> filenames.
+
+### Expert-2 variants (LFCC-LCNN)
+
+Three checkpoints share one architecture. `hybrid` is on the Hub; the other two
+are local-only and ship in `model_cache/`.
+
+| Key | What is different | Verdict changes when the resampler changes |
+|---|---|---|
+| `hybrid` | the published baseline | **13.35 logits** |
+| `hybrid_nc` | + fine-tuned on 12 modern engines | 5.25 logits |
+| `hybrid_br` | + 7 kHz parity band gate | **0.03 logits** |
+
+That last column is the one that matters in service. `hybrid`'s reported dev EER
+of **2.42% is artifact-inflated**: it was measured on librosa-resampled audio,
+and on the audio this backend actually produces the same weights score
+**27.52%**. `hybrid_br` scores **8.27% on both paths**. Do not compare 2.42% to
+8.27% — they measure different things, and only the second one predicts field
+behaviour. The full argument, with the measurement that settles it, is in
+[CALIBRATION-AND-RESAMPLING.md](CALIBRATION-AND-RESAMPLING.md).
+
+At the shipped policy bands, `hybrid_br` on 27 generators unseen by both the
+training run and the calibrator fit: **88.1% of spoofs caught at a 2.9% false
+alarm rate**, with no generator below 50% recall.
 
 ## Run it
 
@@ -89,6 +115,8 @@ Do not expose it to an untrusted network.
 | `lfcc-detector/` | Expert-2 training/eval code (LFCC-LCNN) |
 | `prosody-detector/` | Experimental interpretable prosody expert — not loaded by the backend |
 | `data_pipeline/` | Manifest building, VAD slicing, dataset prep |
+| [CALIBRATION-AND-RESAMPLING.md](CALIBRATION-AND-RESAMPLING.md) | **Required reading** before retraining or changing preprocessing: the calibrator↔expert mapping, the resampler bug, the three startup guards |
+| [realtime-backend/.env.example](realtime-backend/.env.example) | Every supported backend config, including how to make the bandwidth-robust expert the decision model |
 
 ## What this project does not claim
 

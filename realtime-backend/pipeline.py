@@ -15,7 +15,7 @@ from audio.ring_buffer import RingBuffer
 from calibration import Calibrator
 from config import Settings
 from experts.protocol import Expert, Score
-from fusion import FusionConfig, fuse_logits
+from fusion import FusionConfig, decision_expert, fuse_logits
 from messages import build_message
 from policy import PolicyConfig, decide
 from smoothing import ExponentialMovingAverage
@@ -23,13 +23,16 @@ from smoothing import ExponentialMovingAverage
 import joblib
 from config import ARTIFACTS_DIR
 
+logger = logging.getLogger("realtime_backend.pipeline")
+
 _LR_MODEL = None
 try:
     _LR_MODEL = joblib.load(ARTIFACTS_DIR / "fusion_lr.joblib")
 except Exception as e:
+    # Missing/unreadable LR model must NOT crash import: the pipeline still runs
+    # every expert and shows each side card; only the lr_fusion headline degrades
+    # (it falls back to the calibrated single-expert logit).
     logger.warning(f"Could not load LR model: {e}")
-
-logger = logging.getLogger("realtime_backend.pipeline")
 
 VALID_ENCODINGS = {"pcm_s16le", "s16le", "int16", "pcm_f32le", "f32le", "float32"}
 
@@ -105,7 +108,26 @@ def process_single_window(
         mode=settings.fusion_mode,
         single_expert=settings.single_expert,
     )
-    probability = calibrator.probability(fused)
+    # `fused` is ONE expert's raw logit in `single` mode -- and in `lr_fusion`
+    # too, where it is the value used whenever the LR model is unavailable. A raw
+    # logit has to be read on its OWN expert's Platt scale. The global
+    # calibrator belongs to whatever CALIBRATOR_PATH points at, which in the
+    # committed default (lr_fusion, CALIBRATOR_PATH=calibrator_hybrid_newclips)
+    # is a DIFFERENT expert than `hybrid`: reading hybrid's logits on hybrid_nc's
+    # scale moves the low/uncertain boundary from logit 1.66 to 0.59 and
+    # uncertain/high from 4.42 to 3.00, i.e. a different verdict over ~15% of the
+    # logit range, all of it in range and plausible-looking.
+    # calibration.assert_single_expert_calibrator() already forces the two to
+    # agree in `single` mode, so this is a no-op there; it is what keeps the
+    # lr_fusion FALLBACK honest. Genuine combinations (`fused`, `heuristic*`)
+    # return None and keep the global calibrator.
+    picked = decision_expert(
+        scores, mode=settings.fusion_mode, single_expert=settings.single_expert
+    )
+    decision_calibrator = calibrator
+    if picked is not None:
+        decision_calibrator = (expert_calibrators or {}).get(picked, calibrator)
+    probability = decision_calibrator.probability(fused)
 
     # Each expert gets its own calibrator; falling back to the global one would
     # read a foreign logit scale, so we only report what we can calibrate.

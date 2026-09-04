@@ -15,7 +15,12 @@ import numpy as np
 import soundfile as sf
 
 from audio.resample import to_mono, to_target_rate
-from calibration import load_calibrator, load_expert_calibrators
+from calibration import (
+    assert_calibrator_gates_match,
+    assert_single_expert_calibrator,
+    load_calibrator,
+    load_expert_calibrators,
+)
 from config import EXPERT_CALIBRATORS, EXPERT_LABELS, load_settings
 from experts.loader import load_experts, prefetch_hub_files
 from fusion import load_fusion
@@ -49,6 +54,16 @@ async def lifespan(_app: FastAPI):
         prefetch_hub_files(settings.model_cache_dir)
     logger.info("Loading experts: %s (fusion_mode=%s)", settings.experts, settings.fusion_mode)
     experts = load_experts(settings)
+    # Reject a calibrator fitted on a different band than its expert serves. Both
+    # directions produce in-range but wrong probabilities, so it has to fail here.
+    assert_calibrator_gates_match(EXPERT_CALIBRATORS, experts)
+    # And in single-expert mode, reject a decision calibrator that belongs to a
+    # DIFFERENT expert than the one being read (pipeline.py applies the global
+    # calibrator to SINGLE_EXPERT's raw logit).
+    assert_single_expert_calibrator(
+        settings.fusion_mode, settings.single_expert,
+        settings.calibrator_path, EXPERT_CALIBRATORS,
+    )
     logger.info("Backend ready on experts=%s", list(experts))
     yield
 
