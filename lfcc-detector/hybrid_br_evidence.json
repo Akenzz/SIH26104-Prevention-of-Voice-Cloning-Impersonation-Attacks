@@ -1,0 +1,388 @@
+{
+  "_note": "Evidence for shipping hybrid_br as the backend decision expert. Source JSONs live in data_pipeline/manifests/, which is gitignored, so they are copied here to stay auditable. Regenerate with lfcc-detector/eval_{hybrid_br,raw_sources,deployment_path,operating_point}.py.",
+  "_headline": "On RAW sources resampled the way the backend resamples (scipy resample_poly), the shipped `hybrid` degrades from 2.42% to 27.52% EER while `hybrid_br` is unchanged at 8.27%. hybrid's low corpus EER is a librosa artifact, not a deployment number.",
+  "checkpoint": "lfcc-detector/checkpoints/hybrid_br_best.pth",
+  "band_gate_hz": 7000.0,
+  "calibrator": {
+    "version": "hybrid_br-gated7000-platt-v1",
+    "kind": "platt",
+    "a": 0.47017953126668416,
+    "b": -0.32064387419330365,
+    "band_gate_hz": 7000.0,
+    "heldout_eer": 0.07835084855286875,
+    "heldout_ece": 0.06103906048022928
+  },
+  "policy_bands": {
+    "low_max": 0.35,
+    "high_min": 0.65,
+    "version": "policy-v0"
+  },
+  "corpus_eval": {
+    "hybrid (shipped)": {
+      "checkpoint": "hybrid_clean.pth",
+      "band_gate_hz": null,
+      "sets": {
+        "dev (in-domain)": {
+          "n": 991,
+          "eer": 0.028254317367220595,
+          "own_threshold": 4.593311786651611,
+          "recall_at_dev_thresh": 0.9717741935483871,
+          "far_at_dev_thresh": 0.028282828282828285
+        },
+        "eval (in-domain)": {
+          "n": 2041,
+          "eer": 0.04310250081946668,
+          "own_threshold": 3.8911359310150146,
+          "recall_at_dev_thresh": 0.9483870967741935,
+          "far_at_dev_thresh": 0.03765690376569038
+        },
+        "eval_ood (UNSEEN gens)": {
+          "n": 3232,
+          "eer": 0.059085320787970096,
+          "own_threshold": 3.1612966060638428,
+          "recall_at_dev_thresh": 0.9232851985559567,
+          "far_at_dev_thresh": 0.04232283464566929,
+          "per_generator": {
+            "Cartesia.ai (Sonic-3)": {
+              "n": 64,
+              "recall": 0.96875
+            },
+            "Chatterbox": {
+              "n": 62,
+              "recall": 1.0
+            },
+            "Edge-TTS": {
+              "n": 67,
+              "recall": 0.7910447761194029
+            },
+            "ElevenLabs-Turbo-v2.5": {
+              "n": 73,
+              "recall": 0.9178082191780822
+            },
+            "FireRedTTS-2.0": {
+              "n": 69,
+              "recall": 0.8985507246376812
+            },
+            "GPT-SoVITS": {
+              "n": 75,
+              "recall": 0.9733333333333334
+            },
+            "Higgs-Audio-V2": {
+              "n": 70,
+              "recall": 1.0
+            },
+            "Index-TTS-2.0": {
+              "n": 65,
+              "recall": 0.9538461538461539
+            },
+            "Inflect-Micro-v2": {
+              "n": 60,
+              "recall": 1.0
+            },
+            "Inflect-Nano-v1": {
+              "n": 60,
+              "recall": 1.0
+            },
+            "Kani-TTS-370M": {
+              "n": 73,
+              "recall": 0.8904109589041096
+            },
+            "Llasa-8B": {
+              "n": 71,
+              "recall": 0.9154929577464789
+            },
+            "LuxTTS": {
+              "n": 62,
+              "recall": 1.0
+            },
+            "MeloTTS": {
+              "n": 62,
+              "recall": 0.7741935483870968
+            },
+            "MingTTS": {
+              "n": 66,
+              "recall": 1.0
+            },
+            "OpenVoiceV2": {
+              "n": 60,
+              "recall": 0.9666666666666667
+            },
+            "Openaudio-S1-Mini": {
+              "n": 61,
+              "recall": 1.0
+            },
+            "Qwen2.5-Omni": {
+              "n": 80,
+              "recall": 0.9625
+            },
+            "Qwen3-TTS-CustomVoice": {
+              "n": 73,
+              "recall": 0.958904109589041
+            },
+            "RVC": {
+              "n": 66,
+              "recall": 0.9090909090909091
+            },
+            "Voxtream": {
+              "n": 72,
+              "recall": 1.0
+            },
+            "itw-unknown": {
+              "n": 529,
+              "recall": 0.8260869565217391
+            },
+            "parler_tts_large_v1": {
+              "n": 61,
+              "recall": 1.0
+            },
+            "suno_bark-small": {
+              "n": 73,
+              "recall": 0.9726027397260274
+            },
+            "tts_models_en_ek1_tacotron2": {
+              "n": 68,
+              "recall": 1.0
+            },
+            "tts_models_en_ljspeech_overflow": {
+              "n": 74,
+              "recall": 1.0
+            }
+          }
+        }
+      },
+      "dev_threshold": 4.593311786651611
+    },
+    "hybrid_br (new)": {
+      "checkpoint": "hybrid_br_best.pth",
+      "band_gate_hz": 7000.0,
+      "sets": {
+        "dev (in-domain)": {
+          "n": 991,
+          "eer": 0.09081744868035191,
+          "own_threshold": 0.7346935272216797,
+          "recall_at_dev_thresh": 0.9092741935483871,
+          "far_at_dev_thresh": 0.09090909090909091
+        },
+        "eval (in-domain)": {
+          "n": 2041,
+          "eer": 0.0744610801534813,
+          "own_threshold": 1.1768838167190552,
+          "recall_at_dev_thresh": 0.9299539170506912,
+          "far_at_dev_thresh": 0.08577405857740586
+        },
+        "eval_ood (UNSEEN gens)": {
+          "n": 3232,
+          "eer": 0.07463081668040593,
+          "own_threshold": -0.7480302453041077,
+          "recall_at_dev_thresh": 0.898014440433213,
+          "far_at_dev_thresh": 0.058070866141732284,
+          "per_generator": {
+            "Cartesia.ai (Sonic-3)": {
+              "n": 64,
+              "recall": 0.921875
+            },
+            "Chatterbox": {
+              "n": 62,
+              "recall": 1.0
+            },
+            "Edge-TTS": {
+              "n": 67,
+              "recall": 0.9104477611940298
+            },
+            "ElevenLabs-Turbo-v2.5": {
+              "n": 73,
+              "recall": 0.7397260273972602
+            },
+            "FireRedTTS-2.0": {
+              "n": 69,
+              "recall": 0.9130434782608695
+            },
+            "GPT-SoVITS": {
+              "n": 75,
+              "recall": 0.9866666666666667
+            },
+            "Higgs-Audio-V2": {
+              "n": 70,
+              "recall": 0.9142857142857143
+            },
+            "Index-TTS-2.0": {
+              "n": 65,
+              "recall": 0.9384615384615385
+            },
+            "Inflect-Micro-v2": {
+              "n": 60,
+              "recall": 1.0
+            },
+            "Inflect-Nano-v1": {
+              "n": 60,
+              "recall": 1.0
+            },
+            "Kani-TTS-370M": {
+              "n": 73,
+              "recall": 0.7808219178082192
+            },
+            "Llasa-8B": {
+              "n": 71,
+              "recall": 0.8169014084507042
+            },
+            "LuxTTS": {
+              "n": 62,
+              "recall": 1.0
+            },
+            "MeloTTS": {
+              "n": 62,
+              "recall": 0.7419354838709677
+            },
+            "MingTTS": {
+              "n": 66,
+              "recall": 0.9696969696969697
+            },
+            "OpenVoiceV2": {
+              "n": 60,
+              "recall": 0.9333333333333333
+            },
+            "Openaudio-S1-Mini": {
+              "n": 61,
+              "recall": 0.9836065573770492
+            },
+            "Qwen2.5-Omni": {
+              "n": 80,
+              "recall": 0.6
+            },
+            "Qwen3-TTS-CustomVoice": {
+              "n": 73,
+              "recall": 0.958904109589041
+            },
+            "RVC": {
+              "n": 66,
+              "recall": 0.8484848484848485
+            },
+            "Voxtream": {
+              "n": 72,
+              "recall": 1.0
+            },
+            "itw-unknown": {
+              "n": 529,
+              "recall": 0.8752362948960303
+            },
+            "parler_tts_large_v1": {
+              "n": 61,
+              "recall": 0.8360655737704918
+            },
+            "suno_bark-small": {
+              "n": 73,
+              "recall": 0.9726027397260274
+            },
+            "tts_models_en_ek1_tacotron2": {
+              "n": 68,
+              "recall": 0.9852941176470589
+            },
+            "tts_models_en_ljspeech_overflow": {
+              "n": 74,
+              "recall": 0.9594594594594594
+            }
+          }
+        }
+      },
+      "dev_threshold": 0.7346935272216797
+    }
+  },
+  "raw_source_train_vs_deploy": {
+    "hybrid (shipped)": {
+      "band_gate_hz": null,
+      "conditions": {
+        "TRAIN path (librosa)": {
+          "eer": 0.024193646728857994,
+          "mean_logit_bonafide": -6.319635139142323,
+          "mean_logit_spoof": 16.620918640308457
+        },
+        "DEPLOY path (scipy)": {
+          "eer": 0.27520069914436107,
+          "mean_logit_bonafide": -6.682523963148847,
+          "mean_logit_spoof": 5.226200887794706
+        }
+      },
+      "eer_delta_train_to_deploy": 0.2510070524155031,
+      "mean_abs_logit_gap": 5.900983895881161,
+      "verdict_flip_rate": 0.17540322580645162
+    },
+    "hybrid_br (new)": {
+      "band_gate_hz": 7000.0,
+      "conditions": {
+        "TRAIN path (librosa)": {
+          "eer": 0.08266162632359816,
+          "mean_logit_bonafide": -4.824623957186034,
+          "mean_logit_spoof": 14.673645763989665
+        },
+        "DEPLOY path (scipy)": {
+          "eer": 0.08266162632359816,
+          "mean_logit_bonafide": -4.82658355500963,
+          "mean_logit_spoof": 14.694348576068279
+        }
+      },
+      "eer_delta_train_to_deploy": 0.0,
+      "mean_abs_logit_gap": 0.016532284996262,
+      "verdict_flip_rate": 0.0
+    }
+  },
+  "deployment_round_trip": {
+    "hybrid (shipped)": {
+      "band_gate_hz": null,
+      "conditions": {
+        "corpus (librosa)": {
+          "eer": 0.04428571428571428,
+          "mean_logit": 4.7049362346982315
+        },
+        "deployment (scipy round trip)": {
+          "eer": 0.05285714285714286,
+          "mean_logit": 4.560398598744401
+        }
+      },
+      "eer_delta_from_resampler": 0.008571428571428577
+    },
+    "hybrid_br (new)": {
+      "band_gate_hz": 7000.0,
+      "conditions": {
+        "corpus (librosa)": {
+          "eer": 0.05142857142857143,
+          "mean_logit": 3.6710768780165486
+        },
+        "deployment (scipy round trip)": {
+          "eer": 0.05142857142857143,
+          "mean_logit": 3.697735225286867
+        }
+      },
+      "eer_delta_from_resampler": 0.0
+    }
+  },
+  "operating_point_at_shipped_policy": {
+    "eval_ood": {
+      "n": 3232,
+      "spoof_high_recall": 0.8808664259927798,
+      "spoof_uncertain": 0.05054151624548736,
+      "spoof_missed_low": 0.06859205776173286,
+      "real_false_alarm_high": 0.028543307086614175,
+      "real_uncertain": 0.015748031496062992,
+      "real_correct_low": 0.9557086614173228
+    },
+    "eval_ood_generators_below_50pct": [],
+    "eval_ood_worst_generator": {
+      "name": "Qwen2.5-Omni",
+      "recall": 0.5125
+    },
+    "dev_heldout": {
+      "n": 485,
+      "spoof_high_recall": 0.9300411522633745,
+      "spoof_uncertain": 0.037037037037037035,
+      "spoof_missed_low": 0.03292181069958848,
+      "real_false_alarm_high": 0.1115702479338843,
+      "real_uncertain": 0.05785123966942149,
+      "real_correct_low": 0.8305785123966942
+    },
+    "sweep_best_high_min": {
+      "threshold": 0.35,
+      "youden_j": 0.88711660365559
+    },
+    "shipped_high_min": 0.65
+  }
+}

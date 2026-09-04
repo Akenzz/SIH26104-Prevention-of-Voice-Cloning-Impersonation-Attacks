@@ -31,6 +31,32 @@ def load_fusion(path: Path) -> FusionConfig:
     )
 
 
+def decision_expert(
+    scores: dict[str, Score],
+    *,
+    mode: str,
+    single_expert: str = "",
+) -> str | None:
+    """Name of the expert whose RAW logit ``fuse_logits`` returns, else None.
+
+    `single` selects one expert's logit outright, and `lr_fusion` returns that
+    same logit as the value pipeline.py falls back to whenever the LR model is
+    unavailable (missing joblib, or `ssl`/`wavlm` not in EXPERTS). In both cases
+    the returned float is ONE model's logit and must be read on THAT model's
+    Platt scale -- the global CALIBRATOR_PATH one generally belongs to a
+    different expert.
+
+    `fused` / `heuristic` / `heuristic_avg` build a genuine combination that no
+    single expert owns, so they return None and keep the global calibrator.
+
+    Selection lives here, in one place, so pipeline.py cannot drift out of step
+    with which expert fuse_logits actually picked.
+    """
+    if mode not in {"single", "lr_fusion"} or not scores:
+        return None
+    return single_expert if single_expert in scores else next(iter(scores))
+
+
 def fuse_logits(
     scores: dict[str, Score],
     config: FusionConfig,
@@ -41,19 +67,19 @@ def fuse_logits(
     """Return (fused_or_selected_logit, expert_used_label)."""
     if not scores:
         raise ValueError("no expert scores to fuse")
-        
+
     if mode == "heuristic_avg":
         return 0.0, "hybrid+ssl"
 
     if mode == "lr_fusion":
         # The actual probability is computed in pipeline.py from the LR model.
         # We return a dummy logit here so fuse_logits doesn't raise.
-        name = single_expert if single_expert in scores else next(iter(scores))
-        return float(scores[name]["logit"]), "lr_fusion"
+        name = decision_expert(scores, mode=mode, single_expert=single_expert)
+        return float(scores[str(name)]["logit"]), "lr_fusion"
 
     if mode == "single":
-        name = single_expert if single_expert in scores else next(iter(scores))
-        return float(scores[name]["logit"]), name
+        name = decision_expert(scores, mode=mode, single_expert=single_expert)
+        return float(scores[str(name)]["logit"]), str(name)
         
     if mode == "heuristic":
         # The tuned real-world threshold was -5.0.

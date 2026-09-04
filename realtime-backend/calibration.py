@@ -105,3 +105,86 @@ def load_expert_calibrators(
         out[name] = load_calibrator(Path(path))
         logger.info("Expert %s calibrator=%s", name, out[name].version)
     return out
+
+
+def assert_calibrator_gates_match(
+    mapping: dict[str, Path],
+    loaded_experts: dict[str, Any],
+) -> None:
+    """Cross-check each calibrator's band gate against its expert's.
+
+    A calibrator fitted on band-gated audio maps logits the ungated model never
+    produces (and vice versa). Both directions are silent -- probabilities stay
+    in [0,1] -- so mismatches are rejected at startup instead of quietly skewing
+    every reported confidence. Only checks artifacts that declare a gate, so
+    pre-existing calibrators are unaffected.
+    """
+    for name, expert in loaded_experts.items():
+        path = mapping.get(name)
+        if path is None or not Path(path).exists():
+            continue
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        cal_gate = data.get("band_gate_hz")
+        exp_gate = getattr(expert, "band_gate_hz", None)
+        if cal_gate and not exp_gate:
+            raise RuntimeError(
+                f"Calibrator {Path(path).name} for expert {name!r} was fitted on audio "
+                f"band-gated at {float(cal_gate):.0f} Hz, but the expert applies no gate. "
+                f"Its probabilities would be meaningless."
+            )
+        if cal_gate and exp_gate and abs(float(cal_gate) - float(exp_gate)) > 1e-6:
+            raise RuntimeError(
+                f"Calibrator/expert band gate mismatch for {name!r}: calibrator fitted at "
+                f"{float(cal_gate):.1f} Hz, expert applies {float(exp_gate):.1f} Hz."
+            )
+        if not cal_gate and exp_gate:
+            logger.warning(
+                "Expert %r applies a %.0f Hz band gate but its calibrator %s does not record "
+                "one. If it was fitted on ungated audio its probabilities are on the wrong "
+                "scale; refit with lfcc-detector/fit_calibrator_br.py.",
+                name, float(exp_gate), Path(path).name,
+            )
+
+
+def assert_single_expert_calibrator(
+    fusion_mode: str,
+    single_expert: str,
+    calibrator_path: Path,
+    mapping: dict[str, Path],
+) -> None:
+    """In `single` mode, the DECISION calibrator must belong to SINGLE_EXPERT.
+
+    pipeline.py computes the headline probability as
+    `calibrator.probability(fused)`, where `calibrator` is the global one from
+    CALIBRATOR_PATH and `fused` is SINGLE_EXPERT's raw logit. Point those two at
+    different experts and every risk band is read off a foreign Platt scale --
+    in-range, plausible, and wrong. The per-expert side cards are unaffected
+    (they use EXPERT_CALIBRATORS), which is exactly what makes this hard to spot
+    by eye: the headline disagrees with its own expert's card.
+
+    Only fires for `single`; the fused modes derive the probability differently.
+    """
+    if fusion_mode != "single":
+        return
+    expected = mapping.get(single_expert)
+    if expected is None:
+        logger.warning(
+            "FUSION_MODE=single with SINGLE_EXPERT=%r, which has no entry in "
+            "EXPERT_CALIBRATORS -- cannot verify that CALIBRATOR_PATH matches it.",
+            single_expert,
+        )
+        return
+    if Path(calibrator_path).resolve() != Path(expected).resolve():
+        raise RuntimeError(
+            f"FUSION_MODE=single reads the decision band from CALIBRATOR_PATH="
+            f"{Path(calibrator_path).name}, but SINGLE_EXPERT={single_expert!r} is "
+            f"calibrated by {Path(expected).name}. The headline probability would be "
+            f"{single_expert}'s logits on another expert's Platt scale. Set "
+            f"CALIBRATOR_PATH={expected}"
+        )
+    logger.info(
+        "Decision calibrator %s matches SINGLE_EXPERT=%s", Path(expected).name, single_expert
+    )

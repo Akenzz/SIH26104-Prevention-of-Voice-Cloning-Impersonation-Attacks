@@ -25,6 +25,15 @@ class AudioDataset(torch.utils.data.Dataset):
         sample_rate: Target sample rate (default 16000 Hz)
         root_dir: Optional root directory to prepend to relative paths
         augment: Whether to apply augmentation (only for training)
+        bandwidth_augment: Randomize resampler fingerprint + bandwidth per window,
+            identically for bonafide and spoof (train split only). Reduces but does
+            not remove the near-Nyquist shortcut -- see band_gate_hz.
+        band_gate_hz: Lowpass EVERY window (all splits, both classes) at this
+            cutoff, deleting the frequency region where the training resampler
+            (librosa/soxr) and the serving resampler (scipy) disagree. 7000.0 is
+            the validated value. Whatever is set here MUST also be applied at
+            inference; a model trained with the gate and served without it is
+            biased spoofward. See diag_band_gate.py.
     """
 
     def __init__(
@@ -34,8 +43,17 @@ class AudioDataset(torch.utils.data.Dataset):
         window_sec: float = 4.0,
         sample_rate: int = 16000,
         root_dir: Optional[str] = None,
-        augment: bool = False
+        augment: bool = False,
+        bandwidth_augment: bool = False,
+        band_gate_hz: Optional[float] = None
     ):
+        # Make repo-root imports (data_pipeline.*) work whether the caller runs
+        # from lfcc-detector/ or from the repo root.
+        import sys, pathlib
+        _repo_root = pathlib.Path(__file__).resolve().parent.parent.parent
+        if str(_repo_root) not in sys.path:
+            sys.path.insert(0, str(_repo_root))
+
         self.manifest_path = manifest_path
         self.split = split
         self.window_sec = window_sec
@@ -43,6 +61,33 @@ class AudioDataset(torch.utils.data.Dataset):
         self.window_samples = int(window_sec * sample_rate)
         self.root_dir = Path(root_dir) if root_dir else None
         self.augment = augment and (split == 'train')  # never augment dev/eval
+
+        # Bandwidth/resampler-fingerprint randomization. Off by default so the
+        # existing training scripts are byte-identical in behaviour; opt in with
+        # bandwidth_augment=True (finetune_bandwidth_robust.py does).
+        # This is the fix for the near-Nyquist label shortcut: the corpus's native
+        # sample rates are split by label (spoof 52.5% @22050 -> librosa-resampled
+        # -> 7.9-8 kHz hole; bonafide 75.8% already @16k -> full band), so the
+        # models learned "hole => spoof" and read live scipy-resampled audio as
+        # bonafide. Randomizing the top band IDENTICALLY on both classes removes
+        # the label information. See memory/lfcc-resampler-bandwidth-shortcut.md.
+        # Parity band gate. Unlike the augmentation below this applies to EVERY
+        # split, because it is not augmentation -- it defines the band the model
+        # is allowed to see, and dev/eval must match train or the numbers are
+        # meaningless. Measured effect on the shipped models: the
+        # scipy-vs-librosa verdict gap falls from 13.35 to 0.05 logits.
+        self.band_gate_hz = float(band_gate_hz) if band_gate_hz else None
+        if self.band_gate_hz:
+            print(f"[INFO] Parity band gate ACTIVE at {self.band_gate_hz:.0f} Hz "
+                  f"(split='{split}', both classes) -- inference MUST use the same cutoff")
+
+        self._bw_aug = None
+        if bandwidth_augment and split == 'train':
+            from data_pipeline.bandwidth_augment import BandwidthAugment
+
+            self._bw_aug = BandwidthAugment(sample_rate=sample_rate)
+            print("[INFO] Bandwidth augmentation ACTIVE (resampler-fingerprint + lowpass "
+                  "randomization, applied identically to bonafide and spoof)")
 
         # Build augmentation pipeline once (reused per sample)
         self._aug_pipeline = None
@@ -122,10 +167,14 @@ class AudioDataset(torch.utils.data.Dataset):
                 audio = torch.zeros(1, self.window_samples, dtype=torch.float32)
                 sr = self.sample_rate
 
-        # Resample if needed
+        # Resample if needed.
+        # Use the SAME resampler the realtime backend uses (scipy resample_poly,
+        # realtime-backend/audio/resample.py) instead of torchaudio's, which was a
+        # third distinct filter with a third distinct near-Nyquist rolloff. Any
+        # remaining fingerprint is then randomized by bandwidth_augment below, so
+        # the band can't encode the label either way.
         if sr != self.sample_rate:
-            resampler = torchaudio.transforms.Resample(sr, self.sample_rate)
-            audio = resampler(audio)
+            audio = self._resample_backend_parity(audio, sr)
 
         # Convert to mono if stereo
         if audio.shape[0] > 1:
@@ -155,9 +204,27 @@ class AudioDataset(torch.utils.data.Dataset):
                 start = (n - W) // 2
             audio = audio[start:start + W]
 
+        # Bandwidth / resampler-fingerprint randomization. Deliberately applied
+        # BEFORE the noise+codec pipeline and AFTER cropping (bounded cost), and
+        # WITHOUT looking at the label -- conditioning on the label here would
+        # re-create the very shortcut this removes.
+        if self._bw_aug is not None:
+            audio = torch.from_numpy(
+                self._bw_aug(audio.numpy())
+            ).to(dtype=torch.float32)
+
         # Apply augmentation if enabled (placeholder for now)
         if self.augment and self.split == 'train':
             audio = self._augment(audio)
+
+        # Parity band gate LAST, so nothing downstream can reintroduce energy
+        # above the cutoff (the noise augmentation is broadband and would).
+        if self.band_gate_hz:
+            from data_pipeline.bandwidth_augment import _lowpass
+
+            audio = torch.from_numpy(
+                _lowpass(audio.numpy(), self.band_gate_hz, self.sample_rate)
+            ).to(dtype=torch.float32)
 
         # Get label
         label = self.label_to_idx[row['label']]
@@ -176,6 +243,28 @@ class AudioDataset(torch.utils.data.Dataset):
                 metadata[col] = row[col]
 
         return audio, label, metadata
+
+    def _resample_backend_parity(self, audio: torch.Tensor, sr: int) -> torch.Tensor:
+        """Resample (1, n) audio to self.sample_rate the way the backend does.
+
+        scipy ``resample_poly`` with the default Kaiser design, matching
+        realtime-backend/audio/resample.py. Falls back to torchaudio if scipy is
+        missing so training never dies on this.
+        """
+        try:
+            from math import gcd
+
+            from scipy.signal import resample_poly
+
+            g = gcd(int(sr), int(self.sample_rate))
+            up = int(self.sample_rate) // g
+            down = int(sr) // g
+            x = audio.numpy()
+            y = resample_poly(x, up, down, axis=-1)
+            return torch.from_numpy(np.ascontiguousarray(y, dtype=np.float32))
+        except ImportError:
+            resampler = torchaudio.transforms.Resample(sr, self.sample_rate)
+            return resampler(audio)
 
     def _augment(self, audio: torch.Tensor) -> torch.Tensor:
         """Apply audio augmentation via data_pipeline.augmentation.TrainingAugmentationPipeline."""

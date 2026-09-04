@@ -1,0 +1,620 @@
+{
+  "per_generator": [
+    {
+      "group": "asv_dev",
+      "generator": "A02",
+      "family": "dsp_vocoder",
+      "eer": 0.17566666666666667,
+      "eer_ci90": [
+        0.15033333333333332,
+        0.20833333333333331
+      ],
+      "auc": 0.8894533333333333,
+      "n_spoof": 150,
+      "n_bona": 500
+    },
+    {
+      "group": "asv_dev",
+      "generator": "A01",
+      "family": "neural_waveform",
+      "eer": 0.24733333333333335,
+      "eer_ci90": [
+        0.21366666666666667,
+        0.2843833333333333
+      ],
+      "auc": 0.8114533333333334,
+      "n_spoof": 150,
+      "n_bona": 500
+    },
+    {
+      "group": "asv_dev",
+      "generator": "A05",
+      "family": "dsp_vocoder",
+      "eer": 0.25266666666666665,
+      "eer_ci90": [
+        0.22299999999999998,
+        0.29578333333333334
+      ],
+      "auc": 0.8049866666666666,
+      "n_spoof": 150,
+      "n_bona": 500
+    },
+    {
+      "group": "asv_dev",
+      "generator": "A06",
+      "family": "non_neural_waveform",
+      "eer": 0.4683333333333333,
+      "eer_ci90": [
+        0.42100000000000004,
+        0.5063333333333333
+      ],
+      "auc": 0.55648,
+      "n_spoof": 150,
+      "n_bona": 500
+    },
+    {
+      "group": "asv_dev",
+      "generator": "A03",
+      "family": "dsp_vocoder",
+      "eer": 0.519,
+      "eer_ci90": [
+        0.48331666666666667,
+        0.5536666666666668
+      ],
+      "auc": 0.48421333333333333,
+      "n_spoof": 150,
+      "n_bona": 500
+    },
+    {
+      "group": "asv_dev",
+      "generator": "A04",
+      "family": "non_neural_waveform",
+      "eer": 0.5643333333333334,
+      "eer_ci90": [
+        0.5292333333333333,
+        0.6094499999999999
+      ],
+      "auc": 0.39228,
+      "n_spoof": 150,
+      "n_bona": 500
+    },
+    {
+      "group": "hi_dev",
+      "generator": "coqui-xtts-v2",
+      "family": "neural_waveform",
+      "eer": 0.4503508771929825,
+      "eer_ci90": [
+        0.40778677462887986,
+        0.4872604588394062
+      ],
+      "auc": 0.5524561403508772,
+      "n_spoof": 150,
+      "n_bona": 494
+    },
+    {
+      "group": "ood_de_mlaad",
+      "generator": "Higgs-Audio-V2",
+      "family": "neural_waveform",
+      "eer": 0.42875,
+      "eer_ci90": [
+        0.39125,
+        0.46875
+      ],
+      "auc": 0.618425,
+      "n_spoof": 100,
+      "n_bona": 400
+    },
+    {
+      "group": "ood_de_mlaad",
+      "generator": "griffin_lim",
+      "family": "non_neural_waveform",
+      "eer": 0.42000000000000004,
+      "eer_ci90": [
+        0.38125,
+        0.4526875000000001
+      ],
+      "auc": 0.594475,
+      "n_spoof": 100,
+      "n_bona": 400
+    },
+    {
+      "group": "ood_de_mlaad",
+      "generator": "RVC",
+      "family": "neural_waveform",
+      "eer": 0.45499999999999996,
+      "eer_ci90": [
+        0.42000000000000004,
+        0.51125
+      ],
+      "auc": 0.540125,
+      "n_spoof": 100,
+      "n_bona": 400
+    },
+    {
+      "group": "ood_de_mlaad",
+      "generator": "Edge-TTS",
+      "family": "neural_waveform",
+      "eer": 0.535,
+      "eer_ci90": [
+        0.48875,
+        0.585
+      ],
+      "auc": 0.4818,
+      "n_spoof": 100,
+      "n_bona": 400
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A14",
+      "family": "dsp_vocoder",
+      "eer": 0.19282758620689658,
+      "eer_ci90": [
+        0.14627586206896553,
+        0.22506896551724137
+      ],
+      "auc": 0.9057758620689655,
+      "n_spoof": 116,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A09",
+      "family": "dsp_vocoder",
+      "eer": 0.19599999999999998,
+      "eer_ci90": [
+        0.1592108695652174,
+        0.22804347826086957
+      ],
+      "auc": 0.8743826086956522,
+      "n_spoof": 115,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A07",
+      "family": "dsp_vocoder",
+      "eer": 0.23339130434782607,
+      "eer_ci90": [
+        0.18953478260869566,
+        0.255104347826087
+      ],
+      "auc": 0.8463652173913043,
+      "n_spoof": 115,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A15",
+      "family": "neural_waveform",
+      "eer": 0.23439130434782607,
+      "eer_ci90": [
+        0.20194999999999996,
+        0.2781804347826087
+      ],
+      "auc": 0.8328173913043478,
+      "n_spoof": 115,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A11",
+      "family": "non_neural_waveform",
+      "eer": 0.3178695652173913,
+      "eer_ci90": [
+        0.2791304347826087,
+        0.3553108695652174
+      ],
+      "auc": 0.749704347826087,
+      "n_spoof": 115,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A08",
+      "family": "neural_waveform",
+      "eer": 0.3135217391304348,
+      "eer_ci90": [
+        0.2771304347826087,
+        0.3405652173913044
+      ],
+      "auc": 0.7421217391304348,
+      "n_spoof": 115,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A13",
+      "family": "non_neural_waveform",
+      "eer": 0.3439130434782609,
+      "eer_ci90": [
+        0.2988260869565217,
+        0.3750065217391304
+      ],
+      "auc": 0.7138260869565217,
+      "n_spoof": 115,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A12",
+      "family": "neural_waveform",
+      "eer": 0.3696086956521739,
+      "eer_ci90": [
+        0.3114717391304348,
+        0.4073478260869565
+      ],
+      "auc": 0.6818608695652174,
+      "n_spoof": 115,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A19",
+      "family": "non_neural_waveform",
+      "eer": 0.46475862068965523,
+      "eer_ci90": [
+        0.42215689655172417,
+        0.5166706896551724
+      ],
+      "auc": 0.5431724137931034,
+      "n_spoof": 116,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A10",
+      "family": "neural_waveform",
+      "eer": 0.47406896551724137,
+      "eer_ci90": [
+        0.42320689655172417,
+        0.5127706896551724
+      ],
+      "auc": 0.5263620689655173,
+      "n_spoof": 116,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A17",
+      "family": "non_neural_waveform",
+      "eer": 0.5051739130434783,
+      "eer_ci90": [
+        0.4656152173913043,
+        0.5480304347826087
+      ],
+      "auc": 0.5019304347826087,
+      "n_spoof": 115,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A16",
+      "family": "non_neural_waveform",
+      "eer": 0.5259310344827586,
+      "eer_ci90": [
+        0.4945896551724138,
+        0.5768431034482758
+      ],
+      "auc": 0.44067241379310346,
+      "n_spoof": 116,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_asv",
+      "generator": "A18",
+      "family": "dsp_vocoder",
+      "eer": 0.6462758620689655,
+      "eer_ci90": [
+        0.5943637931034483,
+        0.6752224137931034
+      ],
+      "auc": 0.2981551724137931,
+      "n_spoof": 116,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "suno_bark",
+      "family": "neural_waveform",
+      "eer": 0.22999999999999998,
+      "eer_ci90": [
+        0.18899999999999997,
+        0.258
+      ],
+      "auc": 0.85518,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "WhisperSpeech",
+      "family": "unknown",
+      "eer": 0.351,
+      "eer_ci90": [
+        0.30995000000000006,
+        0.391
+      ],
+      "auc": 0.68152,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "sesame_csm",
+      "family": "unknown",
+      "eer": 0.388,
+      "eer_ci90": [
+        0.33899999999999997,
+        0.43999999999999995
+      ],
+      "auc": 0.64526,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "griffin_lim",
+      "family": "non_neural_waveform",
+      "eer": 0.38,
+      "eer_ci90": [
+        0.34195,
+        0.43999999999999995
+      ],
+      "auc": 0.63454,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "Llasa-8B",
+      "family": "neural_waveform",
+      "eer": 0.41800000000000004,
+      "eer_ci90": [
+        0.369,
+        0.47
+      ],
+      "auc": 0.61962,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "Higgs-Audio-V2",
+      "family": "neural_waveform",
+      "eer": 0.42900000000000005,
+      "eer_ci90": [
+        0.379,
+        0.47
+      ],
+      "auc": 0.59146,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "vixTTS",
+      "family": "neural_waveform",
+      "eer": 0.42600000000000005,
+      "eer_ci90": [
+        0.3829,
+        0.48005
+      ],
+      "auc": 0.58406,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "Edge-TTS",
+      "family": "neural_waveform",
+      "eer": 0.43400000000000005,
+      "eer_ci90": [
+        0.391,
+        0.47905
+      ],
+      "auc": 0.58372,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "Qwen2.5-Omni",
+      "family": "neural_waveform",
+      "eer": 0.46799999999999997,
+      "eer_ci90": [
+        0.42295000000000005,
+        0.51805
+      ],
+      "auc": 0.57172,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "MeloTTS",
+      "family": "unknown",
+      "eer": 0.44099999999999995,
+      "eer_ci90": [
+        0.37995,
+        0.48235000000000006
+      ],
+      "auc": 0.57156,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "kokoro",
+      "family": "neural_waveform",
+      "eer": 0.47,
+      "eer_ci90": [
+        0.4277000000000001,
+        0.511
+      ],
+      "auc": 0.56432,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "f5-tts",
+      "family": "neural_waveform",
+      "eer": 0.45199999999999996,
+      "eer_ci90": [
+        0.40895000000000004,
+        0.49805
+      ],
+      "auc": 0.5488,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "Chatterbox",
+      "family": "neural_waveform",
+      "eer": 0.489,
+      "eer_ci90": [
+        0.44199999999999995,
+        0.53805
+      ],
+      "auc": 0.5145,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "parler_tts_mini_v1",
+      "family": "neural_waveform",
+      "eer": 0.5900000000000001,
+      "eer_ci90": [
+        0.54995,
+        0.63
+      ],
+      "auc": 0.38296,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_en_mlaad",
+      "generator": "OpenVoiceV2",
+      "family": "neural_waveform",
+      "eer": 0.61,
+      "eer_ci90": [
+        0.5799500000000001,
+        0.6599999999999999
+      ],
+      "auc": 0.33618,
+      "n_spoof": 100,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_hi_indicf5",
+      "generator": "ai4bharat-indicf5",
+      "family": "neural_waveform",
+      "eer": 0.43733333333333335,
+      "eer_ci90": [
+        0.3839666666666667,
+        0.4727166666666667
+      ],
+      "auc": 0.6198133333333333,
+      "n_spoof": 150,
+      "n_bona": 500
+    },
+    {
+      "group": "ood_itw",
+      "generator": "itw-unknown",
+      "family": "unknown",
+      "eer": 0.5346666666666666,
+      "eer_ci90": [
+        0.49266666666666664,
+        0.5621166666666667
+      ],
+      "auc": 0.46328,
+      "n_spoof": 150,
+      "n_bona": 500
+    }
+  ],
+  "by_family": {
+    "non_neural_waveform": {
+      "n_generators": 9,
+      "mean_auc": 0.569675633016825,
+      "mean_eer": 0.44336809373091235,
+      "min_auc": 0.39228,
+      "max_auc": 0.749704347826087,
+      "n_spoof": 1077
+    },
+    "dsp_vocoder": {
+      "n_generators": 7,
+      "mean_auc": 0.7290474562718641,
+      "mean_eer": 0.3165468694224316,
+      "min_auc": 0.2981551724137931,
+      "max_auc": 0.9057758620689655,
+      "n_spoof": 912
+    },
+    "neural_waveform": {
+      "n_generators": 21,
+      "mean_auc": 0.5980835655230029,
+      "mean_eer": 0.4267313451670155,
+      "min_auc": 0.33618,
+      "max_auc": 0.85518,
+      "n_spoof": 2311
+    },
+    "unknown": {
+      "n_generators": 4,
+      "mean_auc": 0.590405,
+      "mean_eer": 0.42866666666666664,
+      "min_auc": 0.46328,
+      "max_auc": 0.68152,
+      "n_spoof": 450
+    }
+  },
+  "feature_cohens_d": {
+    "non_neural_waveform": {
+      "f0_std": -0.11342321336269379,
+      "f0_range": -0.10774847120046616,
+      "f0_delta_var": 0.13694463670253754,
+      "voiced_fraction": -0.31462517380714417,
+      "pause_mean": -0.319604754447937,
+      "pause_var": -0.16179591417312622,
+      "pause_count": -0.06067037209868431,
+      "rate_mean": 0.3531073331832886,
+      "rate_var": -0.05694716051220894,
+      "jitter_local": 0.33279088139533997,
+      "shimmer_local": 0.5593901872634888,
+      "spectral_flatness": 0.30824992060661316,
+      "jitter_source": 0.05432054027915001
+    },
+    "dsp_vocoder": {
+      "f0_std": -0.433892160654068,
+      "f0_range": -0.4266732931137085,
+      "f0_delta_var": -0.25261643528938293,
+      "voiced_fraction": 0.347289115190506,
+      "pause_mean": -0.531442403793335,
+      "pause_var": -0.5039400458335876,
+      "pause_count": 0.3519575595855713,
+      "rate_mean": 0.6311108469963074,
+      "rate_var": -0.29173344373703003,
+      "jitter_local": -0.4635024666786194,
+      "shimmer_local": -0.1322527378797531,
+      "spectral_flatness": 0.4781222939491272,
+      "jitter_source": 0.05432054027915001
+    },
+    "neural_waveform": {
+      "f0_std": 0.11779306828975677,
+      "f0_range": 0.12383385747671127,
+      "f0_delta_var": 0.025247469544410706,
+      "voiced_fraction": 0.04529864713549614,
+      "pause_mean": 0.14264333248138428,
+      "pause_var": 0.18052753806114197,
+      "pause_count": 0.0973932072520256,
+      "rate_mean": -0.017851904034614563,
+      "rate_var": 0.12995457649230957,
+      "jitter_local": -0.19229008257389069,
+      "shimmer_local": -0.14939498901367188,
+      "spectral_flatness": 0.20473197102546692,
+      "jitter_source": 0.05432054027915001
+    }
+  },
+  "artifact": "artifacts/prosody_lr_v1.json",
+  "splits": "eval_ood,dev"
+}

@@ -14,6 +14,28 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 ARTIFACTS_DIR = ROOT / "artifacts"
+
+
+def _load_dotenv(path: Path) -> None:
+    """Read KEY=VALUE lines from realtime-backend/.env into os.environ.
+
+    Zero-dependency and optional: the file is gitignored and only used to keep
+    local secrets (GROQ_API_KEY) out of shell history and out of the repo. Real
+    environment variables always win, so this never overrides an explicit
+    `GROQ_API_KEY=... python server.py`.
+    """
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
+_load_dotenv(ROOT / ".env")
+
 MODEL_CACHE_DIR = Path(os.environ.get("MODEL_CACHE_DIR", str(ROOT / "model_cache")))
 
 TARGET_SAMPLE_RATE = 16000
@@ -56,6 +78,42 @@ HUB_EXPERTS = {
         "filename": "best_SSL_model_LA.pth",
         "local_name": "best_SSL_model_LA.pth",
     },
+    # Expert 2b: the SAME LFCC-LCNN hybrid architecture as `hybrid`, warm-start
+    # fine-tuned 5 epochs on the corpus + Amogh's 12 modern-engine clips
+    # (fireredtts / omni / sopro / styletts2 / chatterbox / qwen ...). NOT new
+    # features -- the identical 60-dim LFCC+deltas front-end, only re-weighted
+    # LCNN. Flips 6/8 previously-missed engines to caught at a small in-domain
+    # cost (dev EER 2.42% -> 2.93%); see memory/newclips-finetune-result.md.
+    # Uploaded to sarosh22/Hybrid_new on HF; ensure_checkpoint pulls it on first
+    # run and caches under model_cache/ like the other Hub experts.
+    # DISPLAY-ONLY: not part of the lr_fusion decision (pipeline.py reads a
+    # fixed [wavlm, hybrid, ssl] vector), so this is a side card, not the verdict.
+    "hybrid_nc": {
+        "repo_id": "sarosh22/Hybrid_new",
+        "filename": "hybrid_clean_plus_newclips_final.pth",
+        "local_name": "hybrid_clean_plus_newclips_final.pth",
+    },
+    # Expert 2c: the bandwidth-robust retrain. Same architecture and data as
+    # hybrid_nc, but trained with a 7 kHz parity band gate on BOTH classes and
+    # ALL splits, which removes the resampler artifact the other LFCC experts
+    # decide on: training resampled with librosa/soxr (brickwalls 7.9-8 kHz),
+    # this backend resamples with scipy (does not), and the corpus's native
+    # sample rates were split by label -- so "hole near Nyquist" was a label
+    # proxy and in-training generators read bonafide live.
+    # Measured: mean |scipy - librosa| verdict gap 13.35 logits (hybrid) and
+    # 5.25 (hybrid_nc) -> 0.03 here, i.e. the verdict no longer depends on the
+    # resampler. Local spoof recall 7/7 vs 0/7 and 6/7.
+    # Its dev EER (8.88%) looks worse than hybrid's 2.42% because 2.42% was
+    # inflated by the artifact -- the same shipped weights score 18.97% once the
+    # band is gated. Do not compare the two numbers directly.
+    # The 7000 Hz gate is stored INSIDE the checkpoint and applied by
+    # experts/lfcc.py at score time; serving this ungated biases it spoofward.
+    "hybrid_br": {
+        "repo_id": "local",
+        "filename": "hybrid_br_best.pth",
+        "local_name": "hybrid_br_best.pth",
+        "local_only": True,
+    },
 }
 
 # Human-facing labels for the frontend, so the UI never has to hardcode names.
@@ -64,6 +122,8 @@ EXPERT_LABELS = {
     "wavlm": "Expert-1: WavLM Base+",
     "hybrid": "Expert-2: LFCC-LCNN Hybrid",
     "ssl": "Expert-3: TakHemlata SSL",
+    "hybrid_nc": "Expert-2b: LFCC-LCNN Hybrid + new engines",
+    "hybrid_br": "Expert-2c: LFCC-LCNN Hybrid (bandwidth-robust)",
 }
 
 # Per-expert Platt calibrators. Each expert's logits live on their own scale, so
@@ -74,6 +134,14 @@ EXPERT_CALIBRATORS = {
     "wavlm": ARTIFACTS_DIR / "platt_v4.json",
     "hybrid": ARTIFACTS_DIR / "calibrator_hybrid_clean.json",
     "ssl": ARTIFACTS_DIR / "platt_ssl.json",
+    # hybrid_nc runs a HIGHER spoof-sensitivity, so its logits sit on their own
+    # scale -- fitted with scripts/fit_calibrator.py on the hybrid dev split.
+    "hybrid_nc": ARTIFACTS_DIR / "calibrator_hybrid_newclips.json",
+    # hybrid_br is calibrated on GATED dev audio (lfcc-detector/fit_calibrator_br.py,
+    # speaker-disjoint half/half: held-out EER 7.84%, ECE 0.061). A calibrator
+    # fitted on ungated audio would map logits this model never produces in
+    # service, so this file and the checkpoint's gate must stay in step.
+    "hybrid_br": ARTIFACTS_DIR / "calibrator_hybrid_br.json",
 }
 
 
@@ -89,17 +157,20 @@ class Settings:
     target_sample_rate: int = TARGET_SAMPLE_RATE
     window_sec: float = WINDOW_SEC
     hop_sec: float = HOP_SEC
-    # Defaults are the shipped demo config: both experts scored and reported,
-    # `hybrid` drives the risk band. `python server.py` with no env vars set is a
-    # working install; env vars only exist for experiments.
-    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid,ssl"))
+    # Defaults are the shipped demo config: all four experts are scored and get
+    # their own side card, and the risk band comes from `lr_fusion` over the
+    # fixed [wavlm, hybrid, ssl] vector. `hybrid_nc` is DISPLAY-ONLY -- it shows
+    # its own calibrated probability but does not feed the decision. `python
+    # server.py` with no env vars set is a working install; env vars only exist
+    # for experiments.
+    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid,ssl,hybrid_nc"))
     fusion_mode: str = os.environ.get("FUSION_MODE", "lr_fusion")
     single_expert: str = os.environ.get("SINGLE_EXPERT", "hybrid")
     ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.3"))
     device: str = os.environ.get("DEVICE", "cpu")
     fusion_path: Path = Path(os.environ.get("FUSION_PATH", str(ARTIFACTS_DIR / "fusion.json")))
     calibrator_path: Path = Path(
-        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "calibrator_hybrid_clean.json"))
+        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "calibrator_hybrid_newclips.json"))
     )
     policy_path: Path = Path(os.environ.get("POLICY_PATH", str(ARTIFACTS_DIR / "policy.json")))
     model_cache_dir: Path = MODEL_CACHE_DIR
@@ -107,6 +178,21 @@ class Settings:
     clip_abs: float = float(os.environ.get("CLIP_ABS", "0.99"))
     clip_fraction: float = float(os.environ.get("CLIP_FRACTION", "0.01"))
     prefetch_models: bool = os.environ.get("PREFETCH_MODELS", "0") == "1"
+    # Task F narration (optional). When GROQ_API_KEY is unset the /narrate
+    # endpoint serves 503 and the frontend uses its local template narrator, so
+    # the demo runs fully offline. Setting a key turns on LLM rephrasing.
+    #
+    # Default model is groq/compound-mini: of the chat models Groq currently
+    # serves it was the only one that returned a clean one-liner. qwen3.6 leaks
+    # <think> chain-of-thought into the content, and openai/gpt-oss-* spend the
+    # whole token budget on hidden reasoning and return empty content. Override
+    # with GROQ_MODEL if your account has something better (e.g. a llama).
+    groq_api_key: str = os.environ.get("GROQ_API_KEY", "")
+    groq_model: str = os.environ.get("GROQ_MODEL", "groq/compound-mini")
+
+    @property
+    def narration_enabled(self) -> bool:
+        return bool(self.groq_api_key)
 
     @property
     def window_samples(self) -> int:

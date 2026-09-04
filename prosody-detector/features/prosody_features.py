@@ -43,6 +43,7 @@ SR = 16000
 
 # Ordered feature vector. ORDER IS A CONTRACT — the trained artifact stores
 # coefficients in this order. Append new features at the END only.
+# v2: removed jitter_source (preprocessing artifact), added RMS features
 FEATURE_NAMES = [
     "f0_std",          # pitch standard deviation (Hz) over voiced frames
     "f0_range",        # p95-p5 pitch spread (Hz)
@@ -56,7 +57,9 @@ FEATURE_NAMES = [
     "jitter_local",    # cycle-to-cycle F0 period variation (Praat) or F0-period proxy
     "shimmer_local",   # cycle-to-cycle amplitude variation (Praat) or amplitude proxy
     "spectral_flatness",  # mean spectral flatness (synthesis often over-smooths)
-    "jitter_source",   # 1.0 if Praat produced jitter/shimmer, 0.0 if librosa fallback
+    "rms_mean",        # mean RMS energy (pre-normalization; catches gain artifacts)
+    "rms_var",         # RMS variance (pre-normalization)
+    "dynamic_range",   # p95/p5 amplitude ratio (dB); over-compressed TTS has low DR
 ]
 
 # Sentinel defaults for degenerate (silent / fully-unvoiced) windows. Chosen so
@@ -74,7 +77,9 @@ _DEFAULTS = {
     "jitter_local": 0.0,
     "shimmer_local": 0.0,
     "spectral_flatness": 0.0,
-    "jitter_source": 0.0,
+    "rms_mean": 0.0,
+    "rms_var": 0.0,
+    "dynamic_range": 0.0,
 }
 
 _FRAME = 512      # ~32 ms @ 16 kHz
@@ -202,7 +207,7 @@ def _micro_features_praat(y: np.ndarray, sr: int) -> dict | None:
         j, s = _safe(jitter), _safe(shimmer)
         if j == 0.0 and s == 0.0:
             return None
-        return {"jitter_local": j, "shimmer_local": s, "jitter_source": 1.0}
+        return {"jitter_local": j, "shimmer_local": s}
     except Exception:
         return None
 
@@ -233,7 +238,25 @@ def _micro_features_librosa(y: np.ndarray, sr: int, pitch: dict) -> dict:
             shimmer = _safe(np.mean(np.abs(np.diff(rms))) / (np.mean(rms) + 1e-9))
     except Exception:
         shimmer = 0.0
-    return {"jitter_local": jitter, "shimmer_local": shimmer, "jitter_source": 0.0}
+    return {"jitter_local": jitter, "shimmer_local": shimmer}
+
+
+def _rms_features(y_raw: np.ndarray, sr: int) -> dict:
+    """RMS energy features computed BEFORE peak normalization to catch gain artifacts."""
+    out = {"rms_mean": 0.0, "rms_var": 0.0, "dynamic_range": 0.0}
+    try:
+        rms = librosa.feature.rms(y=y_raw, frame_length=_FRAME, hop_length=_HOP)[0]
+        if rms.size > 0:
+            out["rms_mean"] = _safe(np.mean(rms))
+            out["rms_var"] = _safe(np.var(rms))
+            # dynamic range: p95/p5 ratio in dB
+            p95 = np.percentile(rms, 95)
+            p5 = np.percentile(rms, 5)
+            if p5 > 1e-9:
+                out["dynamic_range"] = _safe(20 * np.log10(p95 / p5))
+    except Exception:
+        pass
+    return out
 
 
 def extract_prosody_features(audio_window: np.ndarray, sr: int = SR) -> dict:
