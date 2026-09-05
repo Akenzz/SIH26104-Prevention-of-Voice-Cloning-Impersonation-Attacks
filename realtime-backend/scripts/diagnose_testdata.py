@@ -1,105 +1,98 @@
-"""
-diagnose_testdata.py — Offline diagnostic: score every file in testdata/.
-Prints per-file mean logits from all 3 experts and LR fusion probability.
-
-Run from repo root:
-    cd /home/akenzz/sih/project
-    cd realtime-backend && ../.venv/bin/python scripts/diagnose_testdata.py
-"""
+#!/usr/bin/env python3
+"""Quick diagnostic: score all testdata files with each expert separately."""
 import sys, os
+# Run from realtime-backend/ directory
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Make realtime-backend the working directory and ensure its imports work
-_SCRIPT   = os.path.abspath(__file__)
-_SCRIPTS  = os.path.dirname(_SCRIPT)
-_BACKEND  = os.path.dirname(_SCRIPTS)           # realtime-backend/
-_REPO     = os.path.dirname(_BACKEND)           # repo root
-
-os.chdir(_BACKEND)
-for p in [_BACKEND, _REPO]:
-    if p not in sys.path:
-        sys.path.insert(0, p)
-
+import glob
 import numpy as np
-import joblib
-import librosa
-import torch
-from pathlib import Path
+import soundfile as sf
+import warnings
+warnings.filterwarnings("ignore")
 
-TESTDATA       = Path(_REPO) / "testdata"
-WINDOW_SEC     = 4.0
-HOP_SEC        = 0.5
-SR             = 16000
-WINDOW_SAMPLES = int(WINDOW_SEC * SR)
-HOP_SAMPLES    = int(HOP_SEC * SR)
+# Suppress noisy loggers
+import logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("fairseq").setLevel(logging.WARNING)
+logging.getLogger("realtime_backend").setLevel(logging.WARNING)
+logging.getLogger("realtime_backend.experts").setLevel(logging.WARNING)
+logging.getLogger("realtime_backend.calibration").setLevel(logging.WARNING)
 
-# ── Load models ───────────────────────────────────────────────────────────────
-print("Loading models (this takes ~90s for SSL)…\n")
-
-from config import load_settings, HUB_EXPERTS
-settings    = load_settings()
-cache_dir   = settings.model_cache_dir
-
+from audio.resample import to_mono, to_target_rate
+from config import Settings, TARGET_SAMPLE_RATE, EXPERT_CALIBRATORS
 from experts.loader import load_experts
-all_experts   = load_experts(settings)   # loads wavlm + hybrid + ssl
-wavlm_expert  = all_experts["wavlm"]
-hybrid_expert = all_experts["hybrid"]
-ssl_expert    = all_experts["ssl"]
+from calibration import load_expert_calibrators, load_calibrator
 
-lr_model = joblib.load(Path(_BACKEND) / "artifacts" / "fusion_lr.joblib")
+WINDOW_SAMPLES = int(4.0 * TARGET_SAMPLE_RATE)  # 4s @ 16kHz
 
-print(f"LR coefficients: wavlm={lr_model.coef_[0][0]:.3f}  hybrid={lr_model.coef_[0][1]:.3f}  ssl={lr_model.coef_[0][2]:.3f}")
-print(f"LR intercept   : {lr_model.intercept_[0]:.3f}")
-print(f"  (spoof if: {lr_model.coef_[0][0]:.3f}*wavlm + {lr_model.coef_[0][1]:.3f}*hybrid + {lr_model.coef_[0][2]:.3f}*ssl > {-lr_model.intercept_[0]:.3f})\n")
+def sigmoid(x):
+    return 1.0 / (1.0 + np.exp(-x))
 
-# ── Score each file ───────────────────────────────────────────────────────────
-SPOOF_KEYWORDS = {"spoof", "generated", "chatterbox", "firered", "omni",
-                  "styletts", "sopro", "spk_17", "qwen"}
-
-files = sorted(TESTDATA.glob("*.*"))
-files = [f for f in files if f.suffix.lower() in {".wav", ".mp3", ".flac"}]
-
-hdr = f"{'FILE':<45} {'TRUTH':>8} | {'wavlm_μ':>8} {'hybrid_μ':>8} {'ssl_μ':>8} | {'LR_prob':>8} {'VERDICT':>10} {'OK?':>6}"
-print(hdr)
-print("─" * len(hdr))
-
-n_correct = 0
-for fpath in files:
-    name  = fpath.name
-    truth = "spoof" if any(k in name.lower() for k in SPOOF_KEYWORDS) else "bonafide"
-
+def score_file(path, experts, calibrators):
     try:
-        audio, _ = librosa.load(str(fpath), sr=SR, mono=True)
+        audio, sr = sf.read(path, always_2d=False)
     except Exception as e:
-        print(f"  ERROR loading {name}: {e}")
-        continue
+        return None, str(e)
+    audio = to_mono(audio, audio.ndim)
+    result = to_target_rate(audio, sr, TARGET_SAMPLE_RATE)
+    audio = result[0] if isinstance(result, tuple) else result
+    audio = audio.astype(np.float32)
 
-    w_logs, h_logs, s_logs, lr_ps = [], [], [], []
+    # Take up to 3 windows
+    results = {}
+    n_windows = max(1, min(3, len(audio) // WINDOW_SAMPLES))
+    logits_per_expert = {k: [] for k in experts}
 
-    for start in range(0, max(1, len(audio) - WINDOW_SAMPLES + 1), HOP_SAMPLES):
-        w = audio[start: start + WINDOW_SAMPLES]
-        if len(w) < WINDOW_SAMPLES:
-            w = np.pad(w, (0, WINDOW_SAMPLES - len(w)))
+    for i in range(n_windows):
+        window = audio[i * WINDOW_SAMPLES : (i + 1) * WINDOW_SAMPLES]
+        if len(window) < WINDOW_SAMPLES:
+            window = np.pad(window, (0, WINDOW_SAMPLES - len(window)))
+        for name, expert in experts.items():
+            score = expert.score(window)
+            logits_per_expert[name].append(float(score["logit"]))
 
-        wl = float(wavlm_expert.score(w)["logit"])
-        hl = float(hybrid_expert.score(w)["logit"])
-        sl = float(ssl_expert.score(w)["logit"])
-        lp = float(lr_model.predict_proba([[wl, hl, sl]])[0, 1])
+    for name, logits in logits_per_expert.items():
+        mean_logit = np.mean(logits)
+        cal = calibrators.get(name)
+        prob = float(cal.probability(mean_logit)) if cal else sigmoid(mean_logit)
+        results[name] = {"logit": round(mean_logit, 3), "prob": round(prob * 100, 1)}
+    return results, None
 
-        w_logs.append(wl); h_logs.append(hl)
-        s_logs.append(sl); lr_ps.append(lp)
+def main():
+    print("Loading experts...")
+    settings = Settings(experts=["wavlm", "hybrid", "ssl"], fusion_mode="heuristic_avg")
+    experts = load_experts(settings)
+    # load calibrators
+    global_cal = load_calibrator(settings.calibrator_path)
+    calibrators = load_expert_calibrators(EXPERT_CALIBRATORS, settings.experts, global_cal)
+    print("Experts loaded.\n")
 
-    if not lr_ps:
-        print(f"  {name:<43} — too short to score")
-        continue
+    testdata = sorted(glob.glob("/home/akenzz/sih/project/testdata/*"))
+    bonafide = [f for f in testdata if "bonafied" in os.path.basename(f).lower()]
+    spoof    = [f for f in testdata if "bonafied" not in os.path.basename(f).lower()]
 
-    avg_w  = np.mean(w_logs)
-    avg_h  = np.mean(h_logs)
-    avg_s  = np.mean(s_logs)
-    avg_lr = np.mean(lr_ps)
-    verdict = "SPOOF" if avg_lr >= 0.5 else "bonafide"
-    correct = (verdict == "SPOOF") == (truth == "spoof")
-    n_correct += int(correct)
+    def run_group(files, label):
+        print(f"{'='*70}")
+        print(f"  {label}")
+        print(f"{'='*70}")
+        print(f"  {'File':<38} {'WavLM%':>7} {'LFCC%':>7} {'SSL%':>7}  {'Weighted%':>10}")
+        print(f"  {'-'*75}")
+        for f in files:
+            res, err = score_file(f, experts, calibrators)
+            if err:
+                print(f"  {os.path.basename(f):<38}  ERROR: {err}")
+                continue
+            pw = res.get("wavlm", {}).get("prob", 0)
+            pl = res.get("hybrid", {}).get("prob", 0)
+            ps = res.get("ssl", {}).get("prob", 0)
+            weighted = round(pw * 0.60 + pl * 0.30 + ps * 0.10, 1)
+            flag = "  ← WRONG" if (label.startswith("BONAFIDE") and weighted > 50) else (
+                   "  ← missed" if (label.startswith("SPOOF") and weighted < 50) else "")
+            print(f"  {os.path.basename(f):<38} {pw:>6.1f}% {pl:>6.1f}% {ps:>6.1f}%  {weighted:>8.1f}%{flag}")
+        print()
 
-    print(f"  {name:<43} {truth:>8} | {avg_w:>8.3f} {avg_h:>8.3f} {avg_s:>8.3f} | {avg_lr:>8.1%} {verdict:>10} {'✓' if correct else '✗ WRONG':>6}")
+    run_group(bonafide, "BONAFIDE (should all be < 50%)")
+    run_group(spoof,    "SPOOF (should all be > 50%)")
 
-print(f"\nAccuracy: {n_correct}/{len(files)} = {n_correct/len(files):.0%}")
+if __name__ == "__main__":
+    main()

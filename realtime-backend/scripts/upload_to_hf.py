@@ -12,12 +12,12 @@ def upload_models():
         print(f"Could not create repo (might already exist or permission issue): {e}")
 
     # 1. Upload WavLM model
-    wavlm_path = "wavlm-base-plus/checkpoints/best_model_v4.pt"
+    wavlm_path = "wavlm-base-plus/checkpoints/best_model_v5.pt"
     if os.path.exists(wavlm_path):
         print(f"Uploading {wavlm_path}...")
         api.upload_file(
             path_or_fileobj=wavlm_path,
-            path_in_repo="wavlm_best_model_v4.pt",
+            path_in_repo="wavlm_best_model_v5.pt",
             repo_id=repo_id,
             repo_type="model",
         )

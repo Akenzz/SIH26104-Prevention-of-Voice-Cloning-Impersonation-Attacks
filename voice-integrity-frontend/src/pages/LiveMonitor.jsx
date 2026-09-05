@@ -510,11 +510,11 @@ export default function LiveMonitor() {
                         </Badge>
                       </div>
                       <p className="text-2xl font-semibold text-zinc-100">
-                        {hasProb ? `${(prob * 100).toFixed(1)}%` : '—'}
+                        {hasProb ? `${(prob * 100).toFixed(1)}%` : 'N/A'}
                         <span className="text-sm font-normal text-zinc-500"> synthetic</span>
                       </p>
                       <p className="text-xs text-zinc-500 mt-2">
-                        logit {typeof scoreData?.logit === 'number' ? scoreData.logit.toFixed(2) : '—'}
+                        logit {typeof scoreData?.logit === 'number' ? scoreData.logit.toFixed(2) : 'N/A'}
                         {scoreData?.model_version ? ` · ${scoreData.model_version}` : ''}
                       </p>
                     </div>

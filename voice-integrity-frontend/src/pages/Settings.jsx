@@ -76,7 +76,7 @@ export default function Settings() {
               </div>
               <div className="flex justify-between items-center py-2 border-b border-zinc-800/50">
                 <span className="text-zinc-400 flex items-center gap-2"><Settings2 size={16}/> Decision Expert</span>
-                <span className="text-zinc-100 font-mono text-sm">{health.decision_expert || '—'}</span>
+                <span className="text-zinc-100 font-mono text-sm">{health.decision_expert || 'N/A'}</span>
               </div>
               <div className="flex justify-between items-center py-2">
                 <span className="text-zinc-400 flex items-center gap-2"><Settings2 size={16}/> Fusion Mode</span>
@@ -107,7 +107,7 @@ export default function Settings() {
                   <div>Calibrator (decision): {health.calibrator_version}</div>
                   <div>Fusion: {health.fusion_version}</div>
                   {(health.expert_details || []).map((e) => (
-                    <div key={e.name}>Calibrator ({e.name}): {e.calibrator_version || '—'}</div>
+                    <div key={e.name}>Calibrator ({e.name}): {e.calibrator_version || 'N/A'}</div>
                   ))}
                 </div>
               </div>
