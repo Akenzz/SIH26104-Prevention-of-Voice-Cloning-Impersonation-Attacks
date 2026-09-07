@@ -94,7 +94,7 @@ resampler differs. 992 clips:
 | `hybrid_br` (gated 7 kHz) | 8.27% | **8.27%** | **+0.00 pts** | 0.02 | **0.0%** |
 
 Same story from the diagnostic angle — mean |scipy − librosa| verdict gap:
-`hybrid` **13.35** logits → `hybrid_nc` **5.25** → `hybrid_br` **0.03**.
+`hybrid` **13.35** logits → `hybrid_br` **0.03**.
 
 `hybrid_maxbr` inherits the property by construction (same 7000 Hz gate, read
 from its own checkpoint) and is measured directly by
@@ -104,7 +104,6 @@ which pushes an out-of-band tone through every expert and compares the shift:
 | model | logit shift from out-of-band energy |
 |---|---|
 | `hybrid` (ungated) | **23.55** |
-| `hybrid_nc` (ungated) | **9.23** |
 | `hybrid_br` (gated) | 0.32 |
 | `hybrid_maxbr` (gated) | **0.03** |
 
@@ -136,8 +135,8 @@ them on anything else and you get a confident number with no meaning.
 |---|---|---|---|---|---|
 | `platt_v4.json` | `wavlm` | sklearn | — | — | unified_manifest dev (Person A) |
 | `platt_ssl.json` | `ssl` | sklearn | — | — | unified_manifest dev (Person A) |
-| `calibrator_hybrid_clean.json` | `hybrid` | platt | 0.4491 | −1.3645 | hybrid dev, **ungated** |
-| `calibrator_hybrid_newclips.json` | `hybrid_nc` | platt | 0.5129 | −0.9220 | hybrid dev, **ungated** |
+| `calibrator_hybrid_newclips.json` | `hybrid` (see note) | platt | 0.5129 | −0.9220 | hybrid dev, **ungated** |
+| `calibrator_hybrid_clean.json` | **nothing** — orphaned | platt | 0.4491 | −1.3645 | the retired standalone `hybrid` weights |
 | `calibrator_hybrid_br.json` | `hybrid_br` | platt | 0.4702 | −0.3206 | hybrid dev, **GATED 7000 Hz** |
 | `calibrator_hybrid_maxbr.json` | `hybrid_maxbr` — **the decision expert** | platt | 0.6854 | +0.1428 | hybrid_maxbr dev, **GATED 7000 Hz** |
 | `calibrator_heuristic.json` | `FUSION_MODE=heuristic` only | identity | 1.0 | 0.0 | not a model calibrator |
@@ -166,17 +165,18 @@ reason `fit_calibrator_maxbr.py` exists as a separate script instead of a flag o
 
 ### Failure mode A — one expert's logits on another's scale
 
-Concretely, reading `hybrid`'s logits through `hybrid_nc`'s calibrator (a
-one-character config mistake) moves the policy boundaries:
+Concretely, the two gated models. Reading `hybrid_maxbr`'s logits through
+`hybrid_br`'s calibrator — a one-word config mistake that **passes** the gate
+check, since both declare 7000 Hz — moves the policy boundaries:
 
-| Boundary | With hybrid's own calibrator | With hybrid_nc's |
+| Boundary | With maxbr's own calibrator | With hybrid_br's |
 |---|---|---|
-| low / uncertain (p=0.35) | logit **1.66** | logit **0.59** |
-| uncertain / high (p=0.65) | logit **4.42** | logit **3.00** |
+| low / uncertain (p=0.35) | logit **−1.11** | logit **−0.63** |
+| uncertain / high (p=0.65) | logit **+0.69** | logit **+2.00** |
 
-The two disagree about the band over **15.5%** of the useful logit range, with a
-max probability error of 0.154. A logit of 3.5 reads `uncertain` on the right
-scale and `high` on the wrong one. Nothing about the output looks broken.
+The `high` boundary moves by 1.3 logits, so a maxbr logit of 1.5 reads `high` on
+the right scale and `uncertain` on the wrong one — under-reporting a spoof by a
+full band. Nothing about the output looks broken.
 
 ### Failure mode B — gated model, ungated calibrator (or vice versa)
 
@@ -190,20 +190,17 @@ mismatch is *detectable* rather than a matter of remembering.
 
 [pipeline.py](realtime-backend/pipeline.py) derives the headline probability from
 the fused logit. In `single` mode that "fused" logit **is** `SINGLE_EXPERT`'s raw
-logit — and in `lr_fusion` mode it is the value used whenever the LR model is
-unavailable (no `fusion_lr.joblib`, or `ssl`/`wavlm` not in `EXPERTS` — note
-`ssl` needs fairseq, so dropping it is a normal thing to do).
+logit. The same applies to any mode that falls back to a single expert when its
+combination is unavailable (`ssl` needs fairseq, which has no Python 3.13 build,
+so dropping it is a normal thing to do).
 
 The per-expert side cards always use `EXPERT_CALIBRATORS` and stay correct. That
 is what makes this one nasty: **the headline silently disagrees with its own
 expert's side card**, and both look plausible.
 
-The committed default (`FUSION_MODE=lr_fusion`, `SINGLE_EXPERT=hybrid`,
-`CALIBRATOR_PATH=calibrator_hybrid_newclips.json`) hits exactly this whenever the
-LR model is unavailable — which is the two-expert `wavlm,hybrid` config. Fixed by
-having the pipeline calibrate a single-expert logit with **that expert's own**
-calibrator (`fusion.decision_expert()` names the owner; genuine combinations keep
-the global calibrator). Pinned by
+Fixed by having the pipeline calibrate a single-expert logit with **that
+expert's own** calibrator (`fusion.decision_expert()` names the owner; genuine
+combinations keep the global calibrator). Pinned by
 `test_lr_fusion_fallback_calibrates_on_the_right_experts_scale`.
 
 ### The three startup guards
@@ -295,7 +292,8 @@ this product, and the choice is a measurement, not a guess.
 | `optispeech` recall **26.9%** under `hybrid_maxbr` (was fine under `hybrid_br`) | Open, and a genuine regression. The only eval_ood generator below 50%. |
 | `sudhanva.wav` false-alarms at p=0.870; 13.2% dev-heldout FA | Open, pre-existing. The 6–7 kHz imbalance is the prime suspect. The other two local real clips are fine (0.004 `low`, 0.500 `uncertain`). |
 | `hybrid_br_best.pth` is **local-only** — not on the Hub | A fresh clone cannot download it. `hybrid_maxbr` does not have this problem (`sarosh22/Final_LFCC`), so the turnkey path is now the decision expert; br is the one that would go missing. |
-| Neither gated model is the committed default | Requires a `.env` (see [.env.example](realtime-backend/.env.example) Config C). Changing the default disables `lr_fusion`, so it is a team decision. |
+| Neither gated model is the committed default | Requires a `.env` (see [.env.example](realtime-backend/.env.example) Config C). The committed default is now `FUSION_MODE=heuristic_avg` over `wavlm,hybrid,ssl`, which averages a gated and two ungated experts — so the default verdict is *not* resampler-invariant. |
+| `hybrid_nc` was deleted and its weights promoted into `hybrid` | Done on main. `HUB_EXPERTS["hybrid"]` now serves `hybrid_clean_plus_newclips_final.pth` and `EXPERT_CALIBRATORS["hybrid"]` was repointed to `calibrator_hybrid_newclips.json` to match — verified, no scale mismatch. `calibrator_hybrid_clean.json` is now orphaned; do not use it. |
 | `wavlm` reads p=0.880 on a real clip | Person A's lane: calibrator/checkpoint mismatch, not a bug in this doc's scope. |
 | Guard 2 cannot tell the two gated calibrators apart | Both declare 7000 Hz. Only guard 3 catches a swap, and only in `single` mode. |
 
@@ -380,7 +378,7 @@ sha256 `d8877e2156c2ec85…`, `band_gate_hz=7000.0`).
 To serve it, `realtime-backend/.env`:
 
 ```
-EXPERTS=wavlm,hybrid,hybrid_nc,hybrid_br,hybrid_maxbr
+EXPERTS=wavlm,hybrid,hybrid_br,hybrid_maxbr
 FUSION_MODE=single
 SINGLE_EXPERT=hybrid_maxbr
 CALIBRATOR_PATH=<abs path>/artifacts/calibrator_hybrid_maxbr.json
@@ -390,6 +388,14 @@ CALIBRATOR_PATH=<abs path>/artifacts/calibrator_hybrid_maxbr.json
 mode `pipeline.py` applies the global calibrator to `SINGLE_EXPERT`'s raw logit,
 so a mismatch reads the band off another model's Platt scale. Guard 3 enforces it
 at startup.
+
+### `/predict-file` is an SSE stream, not a JSON response
+
+Main changed it: it now emits one `data: {"event": "window_scored", ...}` line per
+window instead of a single JSON body. A client that calls `.json()` on the
+response gets an empty-body decode error, which looks exactly like a crashed
+endpoint. `voice-integrity-frontend/src/lib/contract.js` and `FileAnalysis.jsx`
+were updated to match; any script of your own was not.
 
 ### A trap in the WebSocket path, if you write a test client
 

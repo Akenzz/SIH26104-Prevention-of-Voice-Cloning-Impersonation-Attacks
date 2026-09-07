@@ -21,7 +21,11 @@ from messages import build_message
 from policy import PolicyConfig, decide
 from smoothing import ExponentialMovingAverage
 
-
+# `logging` was imported and five logger.* calls added, but the module-level
+# logger itself was missing -- so every failsafe path (seq gap, stream gap,
+# resample warning) raised NameError instead of logging. Those are exactly the
+# live-stream paths the frontend hits.
+logger = logging.getLogger("realtime_backend.pipeline")
 
 VALID_ENCODINGS = {"pcm_s16le", "s16le", "int16", "pcm_f32le", "f32le", "float32"}
 

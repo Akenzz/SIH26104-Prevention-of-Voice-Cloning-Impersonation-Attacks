@@ -61,13 +61,17 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
             loaded[key] = SSLExpert(cache_dir=settings.model_cache_dir, device=settings.device)
             continue
 
-        if key == "hybrid_br":
-            # Same LFCC-LCNN class again, local-only, but trained WITH a 7 kHz
-            # parity band gate. The gate lives in the checkpoint and is applied
-            # inside LFCCLCNNExpert.score(), so nothing here (or in the pipeline)
-            # needs to know the cutoff -- and it cannot be applied twice.
-            # This is the only LFCC expert whose verdict does not depend on which
-            # resampler produced the audio (0.03 vs 13.35/5.25 logit gap).
+        if key in _BAND_GATED_LFCC:
+            # Same LFCC-LCNN class again, but trained WITH a 7 kHz parity band
+            # gate. The gate lives in the checkpoint and is applied inside
+            # LFCCLCNNExpert.score(), so nothing here (or in the pipeline) needs
+            # to know the cutoff -- and it cannot be applied twice.
+            # These are the only LFCC experts whose verdict does not depend on
+            # which resampler produced the audio (0.03 vs 13.35 logit gap).
+            #   hybrid_br    -- warm-start fine-tune, local-only checkpoint
+            #   hybrid_maxbr -- from-scratch on the 84k-chunk / 132-generator
+            #                   merged corpus, hosted at sarosh22/Final_LFCC,
+            #                   and the current decision expert
             from .lfcc import LFCCLCNNExpert
 
             loaded[key] = LFCCLCNNExpert(
@@ -78,7 +82,7 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
             )
             continue
         raise ValueError(
-            f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid, ssl, hybrid_nc, "
+            f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid, ssl, "
             f"{', '.join(sorted(_BAND_GATED_LFCC))}"
         )
     if not loaded:

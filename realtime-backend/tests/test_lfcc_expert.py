@@ -42,7 +42,14 @@ def test_hybrid_expert_returns_finite_logit_and_embedding():
     assert score["embedding"] is not None
     assert len(score["embedding"]) == 128
     assert all(np.isfinite(v) for v in score["embedding"])
-    assert score["model_version"] == "hybrid_clean"
+    # `hybrid` now serves the newclips-folded checkpoint (the old standalone
+    # `hybrid_nc` expert was removed and its weights promoted). Assert against
+    # config rather than a literal so the next checkpoint swap doesn't fail here
+    # for the wrong reason -- what matters is that the version tracks the file
+    # actually loaded, since EXPERT_CALIBRATORS["hybrid"] is fitted to it.
+    from config import HUB_EXPERTS
+
+    assert score["model_version"] == HUB_EXPERTS["hybrid"]["local_name"].removesuffix(".pth")
 
 
 def test_hybrid_expert_is_deterministic_in_eval():
