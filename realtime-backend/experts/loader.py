@@ -9,6 +9,13 @@ from .protocol import Expert
 
 logger = logging.getLogger("realtime_backend.experts")
 
+# LFCC-LCNN checkpoints trained WITH the parity band gate. They share one load
+# path because the gate is read from the checkpoint, not from this table -- adding
+# a name here is all a new gated LFCC checkpoint needs, and _assert_band_gates_applied
+# below still verifies each one independently.
+_BAND_GATED_LFCC = {"hybrid_br", "hybrid_maxbr"}
+
+
 def load_experts(settings: Settings) -> dict[str, Expert]:
     """Instantiate experts named in settings.experts.
 
@@ -69,24 +76,28 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
                 name="hybrid_nc",
             )
             continue
-        if key == "hybrid_br":
-            # Same LFCC-LCNN class again, local-only, but trained WITH a 7 kHz
-            # parity band gate. The gate lives in the checkpoint and is applied
-            # inside LFCCLCNNExpert.score(), so nothing here (or in the pipeline)
-            # needs to know the cutoff -- and it cannot be applied twice.
-            # This is the only LFCC expert whose verdict does not depend on which
-            # resampler produced the audio (0.03 vs 13.35/5.25 logit gap).
+        if key in _BAND_GATED_LFCC:
+            # Same LFCC-LCNN class again, but trained WITH a 7 kHz parity band
+            # gate. The gate lives in the checkpoint and is applied inside
+            # LFCCLCNNExpert.score(), so nothing here (or in the pipeline) needs
+            # to know the cutoff -- and it cannot be applied twice.
+            # These are the only LFCC experts whose verdict does not depend on
+            # which resampler produced the audio (0.03 vs 13.35/5.25 logit gap).
+            #   hybrid_br    -- warm-start fine-tune, local-only checkpoint
+            #   hybrid_maxbr -- from-scratch on the 84k-chunk / 132-generator
+            #                   merged corpus, hosted at sarosh22/Final_LFCC
             from .lfcc import LFCCLCNNExpert
 
             loaded[key] = LFCCLCNNExpert(
                 cache_dir=settings.model_cache_dir,
                 device=settings.device,
-                hub_key="hybrid_br",
-                name="hybrid_br",
+                hub_key=key,
+                name=key,
             )
             continue
         raise ValueError(
-            f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid, ssl, hybrid_nc, hybrid_br"
+            f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid, ssl, hybrid_nc, "
+            f"{', '.join(sorted(_BAND_GATED_LFCC))}"
         )
     if not loaded:
         raise ValueError("No experts loaded")

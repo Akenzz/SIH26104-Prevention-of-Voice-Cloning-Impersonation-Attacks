@@ -177,7 +177,28 @@ def main():
                              "output checkpoint is only written if an extra epoch actually beats "
                              "the resumed model. Point --checkpoint-name at a NEW file to preserve "
                              "the original.")
+    parser.add_argument("--band-gate-hz", type=float, default=0.0,
+                        help="Lowpass BOTH classes and BOTH splits at this cutoff, in Hz "
+                             "(0 = off). Set 7000 for parity with the deployment resampler: "
+                             "preprocessing resampled with librosa/soxr, which brickwalls "
+                             "7.9-8 kHz, while realtime-backend uses scipy resample_poly, "
+                             "which does not -- and the corpus's native sample rates are "
+                             "split by label, so 'full band => bonafide' is a shortcut. "
+                             "The cutoff is written into the checkpoint and MUST be applied "
+                             "at inference; serving a gated model ungated biases it spoofward. "
+                             "See CALIBRATION-AND-RESAMPLING.md.")
+    parser.add_argument("--bandwidth-augment", action="store_true",
+                        help="Randomize the resampler fingerprint label-independently on the "
+                             "train split (data_pipeline.bandwidth_augment). Complements "
+                             "--band-gate-hz: the gate removes the untrustworthy band, this "
+                             "stops the model keying on the exact band edge.")
+    parser.add_argument("--save-final", action="store_true",
+                        help="Also write <checkpoint-name stem>_final.pth after every epoch, "
+                             "regardless of dev EER. Crash recovery for long unattended runs; "
+                             "the best-EER checkpoint is still written separately.")
     args = parser.parse_args()
+
+    band_gate = args.band_gate_hz if args.band_gate_hz and args.band_gate_hz > 0 else None
 
     config = TrainingConfig(
         train_manifest=args.train_manifest,
@@ -208,9 +229,20 @@ def main():
     # itself also hard-gates augment to split=='train'); dev must stay clean so the
     # early-stopping EER is measured on un-augmented audio.
     print(f"[INFO] Channel augmentation: {'ON (train split)' if args.augment else 'OFF'}")
+    if band_gate:
+        print(f"[INFO] Band gate: {band_gate:.0f} Hz on BOTH train and dev "
+              f"(persisted to the checkpoint; MUST be applied at inference)")
+    else:
+        print("[WARN] Band gate: OFF — this reproduces the near-Nyquist resampler "
+              "shortcut. Pass --band-gate-hz 7000 unless you know why you want it off.")
+    print(f"[INFO] Bandwidth augmentation: {'ON (train split)' if args.bandwidth_augment else 'OFF'}")
     train_dataset = AudioDataset(config.train_manifest, split='train', window_sec=config.window_sec,
-                                 augment=args.augment)
-    dev_dataset = AudioDataset(config.dev_manifest, split='dev', window_sec=config.window_sec)
+                                 augment=args.augment,
+                                 bandwidth_augment=args.bandwidth_augment,
+                                 band_gate_hz=band_gate)
+    # The gate applies to dev too — dev must match train or the EER is meaningless.
+    dev_dataset = AudioDataset(config.dev_manifest, split='dev', window_sec=config.window_sec,
+                               band_gate_hz=band_gate)
 
     # On Windows the main-guard (if __name__=='__main__') lets num_workers>0 spawn
     # cleanly. num_workers=0 decodes serially and starves the GPU (~1 batch/s).
@@ -277,10 +309,25 @@ def main():
     print(f"  Batch size  : {config.batch_size}")
     print(f"  LR          : {config.learning_rate}")
     print(f"  Log every   : {log_every} batches")
+    print(f"  Band gate   : {f'{band_gate:.0f} Hz' if band_gate else 'OFF'}")
     print(f"  Checkpoint  : {Path(config.output_dir) / checkpoint_name}")
     print(f"{'-'*60}")
 
     # best_eer / start_epoch were initialised above (carried over on --resume-from)
+    def _save(path, epoch, eer):
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'best_eer': eer,
+            'config': config,
+            # Persisted so inference cannot silently forget the gate — experts/lfcc.py
+            # reads this instead of hardcoding a second copy of the number.
+            'band_gate_hz': band_gate,
+            'bandwidth_augment': args.bandwidth_augment,
+        }, path)
+
+    final_path = Path(config.output_dir) / (Path(checkpoint_name).stem + "_final.pth")
     for epoch in range(start_epoch, config.epochs + 1):
         t0 = time.time()
         train_loss, train_acc = train_one_epoch(
@@ -299,16 +346,13 @@ def main():
             flush=True
         )
 
+        if args.save_final:
+            _save(final_path, epoch, dev_eer)
+
         if dev_eer < best_eer:
             best_eer = dev_eer
             checkpoint_path = Path(config.output_dir) / checkpoint_name
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'best_eer': best_eer,
-                'config': config
-            }, checkpoint_path)
+            _save(checkpoint_path, epoch, best_eer)
             print(f"  * New best! EER={best_eer*100:.4f}%  -> saved {checkpoint_path}", flush=True)
 
     print(f"\nTraining Complete! Best Dev EER: {best_eer*100:.2f}%")

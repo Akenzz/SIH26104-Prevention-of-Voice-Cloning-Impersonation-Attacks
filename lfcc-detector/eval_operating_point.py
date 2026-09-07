@@ -1,4 +1,4 @@
-"""Where does hybrid_br actually land at the SHIPPED policy bands?
+"""Where does a gated LFCC model actually land at the SHIPPED policy bands?
 
 Every number so far used an EER-optimal threshold, which is not what the backend
 does. policy.json bands the CALIBRATED probability at low<0.35, uncertain, and
@@ -6,18 +6,21 @@ high>=0.65, so the deployed operating point is p>=0.65 -- not the EER point
 (p=0.578 at logit 1.35). Those are different decisions and give different
 recall/false-alarm rates.
 
-This applies the real serving chain -- gate -> model -> calibrator_hybrid_br.json
--> policy bands -- to two held-out sets and reports the confusion at the bands
-the backend will actually use, plus a sweep so the choice of high_min is a
-measurement rather than a guess.
+This applies the real serving chain -- gate -> model -> that model's own Platt
+calibrator -> policy bands -- to two held-out sets and reports the confusion at
+the bands the backend will actually use, plus a sweep so the choice of high_min is
+a measurement rather than a guess.
 
-eval_ood is the honest headline: 27 generators the model never trained on AND
-never seen by the calibrator fit. dev-heldout is the speaker-disjoint half that
-fit_calibrator_br.py did not fit on (same rng(0) speaker shuffle, reproduced
-here).
+eval_ood is the honest headline: generators the model never trained on AND never
+seen by the calibrator fit. dev-heldout is the speaker-disjoint half that the
+calibrator fit excluded (same rng(0) speaker shuffle, reproduced here).
+
+--model picks the chain. The checkpoint, calibrator, dev split and eval_ood split
+move TOGETHER: hybrid_maxbr trained on a different corpus, so measuring it against
+hybrid_br's dev/ood would score it on data that is partly in its own training set.
 
 Run from lfcc-detector/:
-  python eval_operating_point.py 2>&1 | tee eval_operating_point.log
+  python eval_operating_point.py --model hybrid_maxbr 2>&1 | tee eval_op_maxbr.log
 """
 
 from __future__ import annotations
@@ -40,11 +43,31 @@ from training.config import TrainingConfig                  # noqa: E402
 
 import soundfile as sf  # noqa: E402
 
-CKPT = HERE / "checkpoints" / "hybrid_br_best.pth"
-CAL = REPO / "realtime-backend" / "artifacts" / "calibrator_hybrid_br.json"
+# Defaults reproduce the original hybrid_br run byte-for-byte; --model selects a
+# different (checkpoint, calibrator, manifest) triple. They must move together --
+# scoring one model through another's calibrator or dev split silently reports
+# numbers for a chain that is never served.
+MODELS = {
+    "hybrid_br": {
+        "ckpt": "hybrid_br_best.pth",
+        "cal": "calibrator_hybrid_br.json",
+        "dev": "hybrid_vad_chunks_dev.csv",
+        "ood": "hybrid_vad_chunks_eval_ood.csv",
+    },
+    "hybrid_maxbr": {
+        "ckpt": "hybrid_maxbr_best.pth",
+        "cal": "calibrator_hybrid_maxbr.json",
+        "dev": "hybrid_maxbr_dev.csv",
+        "ood": "hybrid_maxbr_eval_ood.csv",
+    },
+}
+
+MODEL = "hybrid_br"
+CKPT = HERE / "checkpoints" / MODELS[MODEL]["ckpt"]
+CAL = REPO / "realtime-backend" / "artifacts" / MODELS[MODEL]["cal"]
 POLICY = REPO / "realtime-backend" / "artifacts" / "policy.json"
-DEV = REPO / "data_pipeline" / "manifests" / "hybrid_vad_chunks_dev.csv"
-OOD = REPO / "data_pipeline" / "manifests" / "hybrid_vad_chunks_eval_ood.csv"
+DEV = REPO / "data_pipeline" / "manifests" / MODELS[MODEL]["dev"]
+OOD = REPO / "data_pipeline" / "manifests" / MODELS[MODEL]["ood"]
 TARGET_SR = 16000
 WINDOW = 4 * TARGET_SR
 
@@ -124,6 +147,30 @@ def show(name: str, c: dict, low: float, high: float) -> None:
 
 
 def main() -> int:
+    global CKPT, CAL, DEV, OOD
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--model", choices=sorted(MODELS), default=MODEL,
+                    help="Which (checkpoint, calibrator, dev, eval_ood) chain to "
+                         "measure. These move together by design.")
+    ap.add_argument("--out", default=None,
+                    help="Where to write the JSON summary "
+                         "(default: manifests/<model>_operating_point.json)")
+    args = ap.parse_args()
+
+    spec = MODELS[args.model]
+    CKPT = HERE / "checkpoints" / spec["ckpt"]
+    CAL = REPO / "realtime-backend" / "artifacts" / spec["cal"]
+    DEV = REPO / "data_pipeline" / "manifests" / spec["dev"]
+    OOD = REPO / "data_pipeline" / "manifests" / spec["ood"]
+    print(f"[INFO] model={args.model}  ckpt={CKPT.name}  cal={CAL.name}\n"
+          f"       dev={DEV.name}  eval_ood={OOD.name}")
+    for p in (CKPT, CAL, DEV, OOD):
+        if not p.exists():
+            print(f"[ERR] missing {p}")
+            return 1
+
     cal = json.loads(CAL.read_text(encoding="utf-8"))
     pol = json.loads(POLICY.read_text(encoding="utf-8"))
     a, b = float(cal["a"]), float(cal["b"])
@@ -146,7 +193,7 @@ def main() -> int:
 
     results = {}
 
-    print("\n[1] eval_ood -- 27 unseen generators, never seen by the calibrator fit")
+    print("\n[1] eval_ood -- unseen generators, never seen by the calibrator fit")
     ood = pd.read_csv(OOD, low_memory=False)
     lo, yo, go, _ = score_manifest(model, gate, ood)
     po = prob(lo)
@@ -198,7 +245,8 @@ def main() -> int:
     results["sweep_best_high_min"] = {"threshold": best[1], "youden_j": best[0]}
     results["shipped_high_min"] = high
 
-    out = REPO / "data_pipeline" / "manifests" / "hybrid_br_operating_point.json"
+    out = (Path(args.out) if args.out else
+           REPO / "data_pipeline" / "manifests" / f"{args.model}_operating_point.json")
     out.write_text(json.dumps(results, indent=2, default=float), encoding="utf-8")
     print(f"\n[OK] wrote {out}")
     return 0

@@ -1,0 +1,14 @@
+{
+  "version": "hybrid_maxbr-gated7000-platt-v1",
+  "kind": "platt",
+  "a": 0.6853679361822034,
+  "b": 0.14277856214244913,
+  "checkpoint": "hybrid_maxbr_best.pth",
+  "band_gate_hz": 7000.0,
+  "fitted_on": "hybrid_maxbr_dev.csv (dev split, GATED, speaker-disjoint half)",
+  "n_fit": 506,
+  "n_heldout": 484,
+  "heldout_eer": 0.09090909090909091,
+  "heldout_ece": 0.07141117542609154,
+  "note": "Fitted on band-gated audio. The model MUST be served with a 7000 Hz lowpass or these probabilities are invalid."
+}

@@ -16,6 +16,9 @@ reproduce each number are in [§5](#5-command-reference).
 
 ## 0. The rules, if you read nothing else
 
+0. **The shipped decision expert is `hybrid_maxbr`**, gated at 7000 Hz and scored
+   with `calibrator_hybrid_maxbr.json`. `hybrid_br` is still loaded as a side card
+   for comparison. See [§2](#2-calibration-which-artifact-belongs-to-which-model).
 1. **One calibrator per expert. Never share.** Every model's logits live on their
    own scale. The mapping is `EXPERT_CALIBRATORS` in
    [config.py](realtime-backend/config.py) — it is the only source of truth.
@@ -91,8 +94,25 @@ resampler differs. 992 clips:
 | `hybrid_br` (gated 7 kHz) | 8.27% | **8.27%** | **+0.00 pts** | 0.02 | **0.0%** |
 
 Same story from the diagnostic angle — mean |scipy − librosa| verdict gap:
-`hybrid` **13.35** logits → `hybrid_nc` **5.25** → `hybrid_br` **0.03**. The
-verdict no longer depends on which resampler produced the audio.
+`hybrid` **13.35** logits → `hybrid_nc` **5.25** → `hybrid_br` **0.03**.
+
+`hybrid_maxbr` inherits the property by construction (same 7000 Hz gate, read
+from its own checkpoint) and is measured directly by
+`tests/test_band_gate.py::test_gated_experts_are_far_less_sensitive_than_ungated`,
+which pushes an out-of-band tone through every expert and compares the shift:
+
+| model | logit shift from out-of-band energy |
+|---|---|
+| `hybrid` (ungated) | **23.55** |
+| `hybrid_nc` (ungated) | **9.23** |
+| `hybrid_br` (gated) | 0.32 |
+| `hybrid_maxbr` (gated) | **0.03** |
+
+The verdict no longer depends on which resampler produced the audio. Note that
+"gated" means *small*, not zero: brickwall rFFT gating leaves ~1% time-domain
+ringing and the log-energy LFCC front-end amplifies it, so the test asserts a
+≥10× reduction against the ungated baseline rather than ≈0. An absolute epsilon
+would fail on a correctly gated model.
 
 ### Still open: the 6–7 kHz imbalance
 
@@ -119,6 +139,7 @@ them on anything else and you get a confident number with no meaning.
 | `calibrator_hybrid_clean.json` | `hybrid` | platt | 0.4491 | −1.3645 | hybrid dev, **ungated** |
 | `calibrator_hybrid_newclips.json` | `hybrid_nc` | platt | 0.5129 | −0.9220 | hybrid dev, **ungated** |
 | `calibrator_hybrid_br.json` | `hybrid_br` | platt | 0.4702 | −0.3206 | hybrid dev, **GATED 7000 Hz** |
+| `calibrator_hybrid_maxbr.json` | `hybrid_maxbr` — **the decision expert** | platt | 0.6854 | +0.1428 | hybrid_maxbr dev, **GATED 7000 Hz** |
 | `calibrator_heuristic.json` | `FUSION_MODE=heuristic` only | identity | 1.0 | 0.0 | not a model calibrator |
 | `calibrator.json` | the **retired** `lfcc` expert | platt | 1.3212 | −0.5200 | ASVspoof19 dev — **do not use** |
 
@@ -127,6 +148,21 @@ default-looking filename in the directory and it belongs to an expert that no
 longer exists. It was fitted on ASVspoof19 and reports `EER 0.0` on its own
 held-out split, which is exactly the kind of number that gets pasted into a
 slide.
+
+**The two gated calibrators are the newer trap.** `calibrator_hybrid_br.json` and
+`calibrator_hybrid_maxbr.json` both record `band_gate_hz: 7000.0`, so guard 2
+below — which compares gates — **passes when they are swapped**. Only guard 3
+catches it, by checking the `checkpoint` field against `SINGLE_EXPERT`. Their
+Platt scales are genuinely different (a 0.4702/b −0.3206 vs a 0.6854/b +0.1428):
+at the shipped `p ≥ 0.65` band, `hybrid_br`'s scale puts the boundary at logit
+**1.98** and `hybrid_maxbr`'s at logit **0.69**. Reading maxbr's logits through
+br's calibrator would under-report every spoof by roughly a full band.
+
+`hybrid_maxbr`'s `a` is larger and its `b` is *positive* — it is a from-scratch
+model on a different corpus (132 generators, 74,672 train chunks), so nothing
+about its scale is comparable to a warm-start fine-tune's. That is the whole
+reason `fit_calibrator_maxbr.py` exists as a separate script instead of a flag on
+`fit_calibrator_br.py`, which is hardcoded to hybrid_br's dev split.
 
 ### Failure mode A — one expert's logits on another's scale
 
@@ -144,11 +180,11 @@ scale and `high` on the wrong one. Nothing about the output looks broken.
 
 ### Failure mode B — gated model, ungated calibrator (or vice versa)
 
-`hybrid_br` is calibrated on band-gated audio. Serve it ungated, or serve a gated
-model with an ungated calibrator, and the Platt map is being applied to logits
-that model never produces. Both directions are silent. This is why
-`calibrator_hybrid_br.json` records `band_gate_hz: 7000.0` — so the mismatch is
-*detectable* rather than a matter of remembering.
+`hybrid_br` and `hybrid_maxbr` are both calibrated on band-gated audio. Serve
+either ungated, or serve a gated model with an ungated calibrator, and the Platt
+map is being applied to logits that model never produces. Both directions are
+silent. This is why each gated calibrator records `band_gate_hz: 7000.0` — so the
+mismatch is *detectable* rather than a matter of remembering.
 
 ### Failure mode C — the headline read off a foreign scale
 
@@ -195,25 +231,59 @@ ungated. The *same weights*, with only the 7–8 kHz band removed, score
 `hybrid_br`'s 8.88% gated dev EER looks worse than 2.42% and is in fact far
 better; the two measure different things.
 
+The same applies across the two gated models, for a different reason.
+`hybrid_maxbr`'s best gated dev EER is **10.20%** and its held-out calibrator EER
+**9.09%**, against `hybrid_br`'s 7.84% — yet maxbr is the better model at the
+shipped operating point. Its dev set is a *single* generator and a different
+corpus, so those two EERs are not comparable either. Compare on eval_ood only.
+
+Also worth knowing before you read `train_hybrid_maxbr.log`: dev EER was
+**non-monotonic** across the 8 epochs (19.49 → 16.87 → 16.26 → 15.15 → 12.63 →
+15.25 → 17.47 → **10.20**). The best epoch was the last one, after two epochs of
+getting worse — patience-based early stopping would have stopped at epoch 5 and
+cost 2.4 points.
+
 **Quote the operating point, not the EER.** The backend bands the calibrated
 probability at `low < 0.35` / `high ≥ 0.65`
 ([artifacts/policy.json](realtime-backend/artifacts/policy.json)). The EER
-threshold (p = 0.578) is a different decision. `eval_operating_point.py` measures
-the real chain — gate → model → calibrator → policy:
+threshold (p = 0.578) is a different decision. `eval_operating_point.py --model
+hybrid_maxbr` measures the real chain — gate → model → its own calibrator →
+policy. The shipped decision expert against the previous one:
 
-| Set | Spoof caught (p≥0.65) | Real false alarm | Abstain |
-|---|---|---|---|
-| **eval_ood** — 27 generators unseen by both training and the calibrator fit | **88.1%** | **2.9%** | 5.1% |
-| dev-heldout — speaker-disjoint half the calibrator did not fit | 93.0% | 11.2% | — |
+| Set | model | Spoof caught (p≥0.65) | Real false alarm | Abstain (spoof) |
+|---|---|---|---|---|
+| **eval_ood** | **`hybrid_maxbr`** | **91.5%** | **1.7%** | 3.1% |
+| **eval_ood** | `hybrid_br` | 88.1% | 2.9% | 5.1% |
+| dev-heldout | `hybrid_maxbr` | 94.6% | 13.2% | 4.1% |
+| dev-heldout | `hybrid_br` | 93.0% | 11.2% | 3.7% |
+
+`hybrid_maxbr` is strictly better on eval_ood — **+3.4 points of recall for −1.2
+points of false alarm** — which is why it replaced `hybrid_br` as the decision.
+The two rows are *not* the same eval set: each model's checkpoint, calibrator, dev
+split and eval_ood split move together (`MODELS` in `eval_operating_point.py`),
+because hybrid_maxbr trained on a different corpus and scoring it against
+hybrid_br's splits would measure part of its own training set. Both eval_ood sets
+happen to have 26 spoof generators; maxbr's is 7,163 rows against br's 3,232.
 
 **eval_ood is the headline**; dev-heldout has only 7 bonafide speakers, so its
-11.2% is small-sample and speaker-specific. Per-generator, **0 of 26 fall below
-50% recall** (worst: Qwen2.5-Omni 51.2%, MeloTTS 62.9%).
+13.2% is small-sample and speaker-specific, and its single dev generator makes it
+useless as a generalization claim.
 
-**Do not retune `policy.json`.** The sweep is nearly flat — Youden J is 0.887 at
-0.35 versus 0.852 at the shipped 0.65 — so 0.65 buys a much lower false-alarm
-rate for about 5 points of recall. That is the right trade for this product, and
-the choice is a measurement, not a guess.
+**"Unseen generators" means 25, not 26 — and never 27.** Of maxbr's 26 eval_ood
+spoof generators, `itw-unknown` is *also* a training source, so only **25** are
+genuinely held out. Do not round this up in a slide. (The older "27 generators"
+figure in earlier drafts of this file was wrong for `hybrid` too.)
+
+**One real regression: `optispeech` recall is 26.9%** (n=193) — the only generator
+below 50%, where `hybrid_br` had none. MeloTTS is second-worst at 53.7% (it was
+62.9% under br). So maxbr's better aggregate hides one generator it handles worse;
+if optispeech-family audio matters for a demo, `hybrid_br` is the safer side card
+and is still loaded.
+
+**Do not retune `policy.json`.** The sweep is nearly flat for maxbr too — Youden J
+is 0.908 at 0.35 versus **0.899** at the shipped 0.65 — so 0.65 costs under one
+point of J and buys a much lower false-alarm rate. That is the right trade for
+this product, and the choice is a measurement, not a guess.
 
 ---
 
@@ -222,10 +292,12 @@ the choice is a measurement, not a guess.
 | Issue | Status |
 |---|---|
 | 6–7 kHz corr(label) = **+0.275** corpus imbalance | **Untouched.** Largest known remaining shortcut. |
-| 2 of 3 local real clips read as spoof (0.760, 0.706); 11.2% dev-heldout FA | Open. The 6–7 kHz imbalance is the prime suspect. |
-| `hybrid_br_best.pth` is **local-only** — not on the Hub | A fresh clone cannot download it. Publish to `sarosh22/Expert2` to make the install turnkey. |
-| `hybrid_br` is not the default | Requires a `.env` (see [.env.example](realtime-backend/.env.example) Config B). Changing the default disables `lr_fusion`, so it is a team decision. |
+| `optispeech` recall **26.9%** under `hybrid_maxbr` (was fine under `hybrid_br`) | Open, and a genuine regression. The only eval_ood generator below 50%. |
+| `sudhanva.wav` false-alarms at p=0.870; 13.2% dev-heldout FA | Open, pre-existing. The 6–7 kHz imbalance is the prime suspect. The other two local real clips are fine (0.004 `low`, 0.500 `uncertain`). |
+| `hybrid_br_best.pth` is **local-only** — not on the Hub | A fresh clone cannot download it. `hybrid_maxbr` does not have this problem (`sarosh22/Final_LFCC`), so the turnkey path is now the decision expert; br is the one that would go missing. |
+| Neither gated model is the committed default | Requires a `.env` (see [.env.example](realtime-backend/.env.example) Config C). Changing the default disables `lr_fusion`, so it is a team decision. |
 | `wavlm` reads p=0.880 on a real clip | Person A's lane: calibrator/checkpoint mismatch, not a bug in this doc's scope. |
+| Guard 2 cannot tell the two gated calibrators apart | Both declare 7000 Hz. Only guard 3 catches a swap, and only in `single` mode. |
 
 ---
 
@@ -243,34 +315,91 @@ The decisive train-path vs deploy-path comparison (needs the raw sources on `E:`
 cd lfcc-detector && python eval_raw_sources.py
 ```
 
-Where the model lands at the *shipped* policy bands, plus the threshold sweep:
+Where the model lands at the *shipped* policy bands, plus the threshold sweep.
+`--model` moves the checkpoint, calibrator, dev split and eval_ood split together;
+mixing them silently reports numbers for a chain that is never served:
 
 ```bash
-cd lfcc-detector && python eval_operating_point.py
+cd lfcc-detector && python eval_operating_point.py --model hybrid_maxbr
 ```
 
-Refit `hybrid_br`'s calibrator on gated audio (speaker-disjoint half/half):
+Refit a gated calibrator on gated audio (speaker-disjoint half/half). One script
+per model on purpose — each is pinned to its own dev manifest:
 
 ```bash
-cd lfcc-detector && python fit_calibrator_br.py
+cd lfcc-detector && python fit_calibrator_maxbr.py
 ```
 
-End-to-end ship gate — 17 checks including a negative test that strips the gate
-and requires the startup guards to raise:
-
-```bash
-cd realtime-backend && python smoke_hybrid_br.py
-```
-
-Regression suite (the gate and calibrator invariants are pinned in
-`tests/test_band_gate.py` and `tests/test_fusion_calibration.py`):
+Regression suite. The gate and calibrator invariants are in
+`tests/test_band_gate.py`, which is **parametrized over every gated checkpoint**
+in `experts/loader.py::_BAND_GATED_LFCC` — adding a name there gives the new model
+the whole guard set instead of trusting it:
 
 ```bash
 cd realtime-backend && python -m pytest
 ```
 
-Consolidated evidence for every number above, in one tracked file — the raw
+End-to-end ship gate for `hybrid_br` — 17 checks including a negative test that
+strips the gate and requires the startup guards to raise. There is **no
+`smoke_hybrid_maxbr.py` twin yet**; the parametrized pytest file covers the same
+invariants for maxbr:
+
+```bash
+cd realtime-backend && python smoke_hybrid_br.py
+```
+
+Consolidated evidence for the `hybrid_br` numbers, in one tracked file — the raw
 JSONs live under `data_pipeline/manifests/`, which is gitignored:
 [lfcc-detector/hybrid_br_evidence.json](lfcc-detector/hybrid_br_evidence.json).
+The `hybrid_maxbr` equivalents are `lfcc-detector/eval_op_maxbr.log`,
+`lfcc-detector/fit_calibrator_maxbr.log` and
+`lfcc-detector/train_hybrid_maxbr.log`.
+
+---
+
+## 6. Serving `hybrid_maxbr` — what the wiring actually is
+
+Nothing about the new model needed new serving code. It follows the same path as
+every other LFCC checkpoint:
+
+| Step | Mechanism | Model-specific? |
+|---|---|---|
+| download | `HUB_EXPERTS["hybrid_maxbr"]` → `sarosh22/Final_LFCC` via `ensure_checkpoint` | one config entry |
+| adapt | the same `LFCCLCNNExpert` class | no |
+| gate | `band_gate_hz` read from the checkpoint in `_wire_model()` | no — read, not hardcoded |
+| calibrate | `EXPERT_CALIBRATORS["hybrid_maxbr"]` | one config entry |
+| guard | all three startup guards, unchanged | no |
+
+`experts/loader.py` routes both gated checkpoints through one branch keyed on the
+`_BAND_GATED_LFCC` set, so the previous copy-pasted per-model branch is gone.
+
+The fresh-clone path was verified empirically: deleting the cached checkpoint and
+re-loading downloads from the Hub to a byte-identical file (13,753,026 bytes,
+sha256 `d8877e2156c2ec85…`, `band_gate_hz=7000.0`).
+
+To serve it, `realtime-backend/.env`:
+
+```
+EXPERTS=wavlm,hybrid,hybrid_nc,hybrid_br,hybrid_maxbr
+FUSION_MODE=single
+SINGLE_EXPERT=hybrid_maxbr
+CALIBRATOR_PATH=<abs path>/artifacts/calibrator_hybrid_maxbr.json
+```
+
+`CALIBRATOR_PATH` must be the **decision** expert's own artifact — in `single`
+mode `pipeline.py` applies the global calibrator to `SINGLE_EXPERT`'s raw logit,
+so a mismatch reads the band off another model's Platt scale. Guard 3 enforces it
+at startup.
+
+### A trap in the WebSocket path, if you write a test client
+
+`apply_start` defaults `encoding` to **`pcm_s16le`**. Send float32 frames without
+declaring `encoding: "pcm_f32le"` and the server decodes them as int16 — which is
+garbage, and garbage reads **spoofward**: every window on both a real and a spoof
+clip came back `high` at p≈0.95–0.97, looking exactly like a model regression.
+With the encoding declared, `/ws` matches `/predict-file` (real clip p=0.0045
+`low`, spoof p=0.94 `high`), and int16 vs float32 differ by <0.001. The streaming
+resampler itself is exact: `StreamingPolyphaseResampler` fed 4800-sample frames
+reproduces `to_target_rate`'s one-shot output logit-for-logit.
 
 

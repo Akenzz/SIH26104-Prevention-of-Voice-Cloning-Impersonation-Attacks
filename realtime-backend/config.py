@@ -114,6 +114,20 @@ HUB_EXPERTS = {
         "local_name": "hybrid_br_best.pth",
         "local_only": True,
     },
+    # Expert 2d: the CURRENT decision expert. Same LFCC-LCNN architecture and the
+    # same 7 kHz parity band gate as hybrid_br, but trained FROM SCRATCH (no warm
+    # start) on a much larger corpus: hybrid_max UNIONED with hybrid_br's own
+    # training data = 84,271 VAD chunks, 6 languages, 132 spoof generators, at
+    # exact chunk-level 1:1 bonafide:spoof WITHIN each language.
+    # Gated dev EER 10.20% vs hybrid_br's 8.88%, but on 25x wider generator
+    # coverage and a different dev split -- read eval_ood, not dev, to compare.
+    # Like hybrid_br the 7000 Hz gate is stored INSIDE the checkpoint and applied
+    # by experts/lfcc.py at score time; serving it ungated biases it spoofward.
+    "hybrid_maxbr": {
+        "repo_id": "sarosh22/Final_LFCC",
+        "filename": "hybrid_maxbr_best.pth",
+        "local_name": "hybrid_maxbr_best.pth",
+    },
 }
 
 # Human-facing labels for the frontend, so the UI never has to hardcode names.
@@ -124,6 +138,7 @@ EXPERT_LABELS = {
     "ssl": "Expert-3: TakHemlata SSL",
     "hybrid_nc": "Expert-2b: LFCC-LCNN Hybrid + new engines",
     "hybrid_br": "Expert-2c: LFCC-LCNN Hybrid (bandwidth-robust)",
+    "hybrid_maxbr": "Expert-2d: LFCC-LCNN Max (132 generators, bandwidth-robust)",
 }
 
 # Per-expert Platt calibrators. Each expert's logits live on their own scale, so
@@ -142,6 +157,11 @@ EXPERT_CALIBRATORS = {
     # fitted on ungated audio would map logits this model never produces in
     # service, so this file and the checkpoint's gate must stay in step.
     "hybrid_br": ARTIFACTS_DIR / "calibrator_hybrid_br.json",
+    # hybrid_maxbr is a different model on a different corpus, so it gets its own
+    # Platt fit on ITS OWN gated dev split (hybrid_maxbr_dev.csv, speaker-disjoint
+    # half). Reusing calibrator_hybrid_br.json here would read this model's logits
+    # on another model's scale -- in-range, plausible, and wrong.
+    "hybrid_maxbr": ARTIFACTS_DIR / "calibrator_hybrid_maxbr.json",
 }
 
 
