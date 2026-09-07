@@ -133,14 +133,43 @@ async def run(url: str, wav: Path | None, chunk_ms: int) -> None:
     print(f"OK: {len(seqs)} messages, sequence {seqs[0]}..{seqs[-1]}")
 
 
+async def run_sse(url: str, wav: Path | None) -> None:
+    import httpx
+
+    if wav is None:
+        raise SystemExit("SSE test requires an actual file path (--wav)")
+
+    print(f"Testing SSE POST to {url} with {wav}")
+    async with httpx.AsyncClient() as client:
+        with open(wav, "rb") as f:
+            files = {"file": (wav.name, f, "audio/wav")}
+            async with client.stream("POST", url, files=files) as response:
+                if response.status_code != 200:
+                    print(f"Error {response.status_code}: {await response.aread()}")
+                    return
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data = line[len("data: "):]
+                        msg = json.loads(data)
+                        print(f"SSE Event: {msg.get('event')} | "
+                              f"seq={msg.get('window_index', '-')} "
+                              f"state={msg.get('risk_state', msg.get('overall_risk_state'))} "
+                              f"p={msg.get('calibrated_probability', msg.get('final_smoothed_probability'))}")
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="ws://127.0.0.1:8000/ws")
+    parser.add_argument("--sse-url", default="http://127.0.0.1:8000/predict-file")
     parser.add_argument("--wav", type=Path, default=None)
     parser.add_argument("--chunk-ms", type=int, default=100)
+    parser.add_argument("--sse", action="store_true", help="Test the SSE /predict-file endpoint instead of websockets")
     args = parser.parse_args()
-    asyncio.run(run(args.url, args.wav, args.chunk_ms))
-
+    
+    if args.sse:
+        asyncio.run(run_sse(args.sse_url, args.wav))
+    else:
+        asyncio.run(run(args.url, args.wav, args.chunk_ms))
 
 if __name__ == "__main__":
     main()
+

@@ -11,6 +11,37 @@ from policy import band, decide, load_policy
 from smoothing import ExponentialMovingAverage
 
 
+def test_file_summary_uses_mean_probability_across_windows():
+    from server import summarize_file_results
+
+    results = [
+        {
+            "start_time_sec": 0.0,
+            "weighted_probability": 0.10,
+            "per_expert_probability": {"wavlm": 0.10, "hybrid": 0.20, "ssl": 0.30},
+        },
+        {
+            "start_time_sec": 1.0,
+            "weighted_probability": 0.30,
+            "per_expert_probability": {"wavlm": 0.30, "hybrid": 0.40, "ssl": 0.50},
+        },
+        {
+            "start_time_sec": 2.0,
+            "weighted_probability": 0.50,
+            "per_expert_probability": {"wavlm": 0.50, "hybrid": 0.60, "ssl": 0.70},
+        },
+    ]
+
+    summary = summarize_file_results(results, ["wavlm", "hybrid", "ssl"], policy=load_policy(ARTIFACTS_DIR / "policy.json"))
+
+    assert summary["weighted_spoof_probability"] == pytest.approx(0.30)
+    assert summary["experts"]["wavlm"]["probability"] == pytest.approx(0.30)
+    assert summary["experts"]["ssl"]["probability"] == pytest.approx(0.50)
+    assert summary["agreement"] == "majority_bonafide"
+    assert summary["confidence_level"] == "medium"
+    assert summary["peak_time_sec"] == 2.0
+
+
 def test_single_mode_ignores_second_expert():
     fusion = load_fusion(ARTIFACTS_DIR / "fusion.json")
     scores = {

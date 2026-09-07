@@ -20,7 +20,41 @@ import pytest
 
 pytest.importorskip("transformers", reason="transformers not installed")
 
-from config import Settings
+from config import HUB_EXPERTS, Settings
+
+
+def test_wavlm_uses_hub_when_local_checkpoint_is_stale(tmp_path, monkeypatch):
+    """A stale local copy must not win over the newly uploaded Hub model."""
+    from experts import wavlm as wavlm_module
+
+    local_path = tmp_path / "best_model_v5.pt"
+    local_path.write_bytes(b"old-weight-data")
+    cache_dir = tmp_path / "cache"
+    expected = cache_dir / HUB_EXPERTS["wavlm"]["local_name"]
+
+    monkeypatch.setattr(wavlm_module, "_LOCAL_CHECKPOINT", local_path)
+    monkeypatch.setattr(
+        wavlm_module,
+        "_remote_checkpoint_is_stale",
+        lambda repo_id, filename, local: True,
+    )
+
+    seen = {}
+
+    def fake_ensure_checkpoint(repo_id, filename, cache_dir, local_name=None):
+        seen["repo_id"] = repo_id
+        seen["filename"] = filename
+        seen["cache_dir"] = cache_dir
+        seen["local_name"] = local_name
+        return expected
+
+    monkeypatch.setattr(wavlm_module, "ensure_checkpoint", fake_ensure_checkpoint)
+
+    resolved = wavlm_module._resolve_wavlm_checkpoint(cache_dir)
+
+    assert resolved == expected
+    assert seen["repo_id"] == HUB_EXPERTS["wavlm"]["repo_id"]
+    assert seen["filename"] == HUB_EXPERTS["wavlm"]["filename"]
 
 
 def _load_expert(device: str = "cpu"):

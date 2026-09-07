@@ -60,32 +60,14 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
 
             loaded[key] = SSLExpert(cache_dir=settings.model_cache_dir, device=settings.device)
             continue
-        if key == "hybrid_nc":
-            # Same LFCC-LCNN class as `hybrid`, warm-start fine-tuned on the
-            # new modern-engine clips. Checkpoint is now on HF at
-            # sarosh22/Hybrid_new and is downloaded by ensure_checkpoint on
-            # first run. DISPLAY-ONLY: scored and calibrated for its own side
-            # card, but NOT read by the lr_fusion decision, which uses the
-            # fixed [wavlm, hybrid, ssl] vector.
-            from .lfcc import LFCCLCNNExpert
 
-            loaded[key] = LFCCLCNNExpert(
-                cache_dir=settings.model_cache_dir,
-                device=settings.device,
-                hub_key="hybrid_nc",
-                name="hybrid_nc",
-            )
-            continue
-        if key in _BAND_GATED_LFCC:
-            # Same LFCC-LCNN class again, but trained WITH a 7 kHz parity band
-            # gate. The gate lives in the checkpoint and is applied inside
-            # LFCCLCNNExpert.score(), so nothing here (or in the pipeline) needs
-            # to know the cutoff -- and it cannot be applied twice.
-            # These are the only LFCC experts whose verdict does not depend on
-            # which resampler produced the audio (0.03 vs 13.35/5.25 logit gap).
-            #   hybrid_br    -- warm-start fine-tune, local-only checkpoint
-            #   hybrid_maxbr -- from-scratch on the 84k-chunk / 132-generator
-            #                   merged corpus, hosted at sarosh22/Final_LFCC
+        if key == "hybrid_br":
+            # Same LFCC-LCNN class again, local-only, but trained WITH a 7 kHz
+            # parity band gate. The gate lives in the checkpoint and is applied
+            # inside LFCCLCNNExpert.score(), so nothing here (or in the pipeline)
+            # needs to know the cutoff -- and it cannot be applied twice.
+            # This is the only LFCC expert whose verdict does not depend on which
+            # resampler produced the audio (0.03 vs 13.35/5.25 logit gap).
             from .lfcc import LFCCLCNNExpert
 
             loaded[key] = LFCCLCNNExpert(

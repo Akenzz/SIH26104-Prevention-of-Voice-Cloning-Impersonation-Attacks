@@ -26,7 +26,15 @@ Outputs (in --output-dir):
     sliced_eval_report.md      Human-readable table for the pitch slide
 """
 
+
 import sys
+from pathlib import Path
+repo_root = Path(__file__).resolve().parent.parent
+if str(repo_root / "realtime-backend") not in sys.path:
+    sys.path.insert(0, str(repo_root / "realtime-backend"))
+from audio.vad import has_speech
+from aggregation import aggregate_logits
+from audio.ring_buffer import RingBuffer
 import json
 import argparse
 from pathlib import Path
@@ -51,6 +59,52 @@ from models.detector import LFCCLCNNDetector
 # ---------------------------------------------------------------------------
 # Core: score a sub-slice of a manifest
 # ---------------------------------------------------------------------------
+
+
+def process_file_logits(audio_path: str, adapter, sample_rate: int, window_sec: float) -> float:
+    import torchaudio, soundfile as sf
+    try:
+        audio_np, sr = sf.read(audio_path, dtype="float32")
+        audio = torch.from_numpy(audio_np)
+        if audio.ndim == 1:
+            audio = audio.unsqueeze(0)
+    except Exception:
+        audio, sr = torchaudio.load(audio_path)
+
+    if sr != sample_rate:
+        audio = torchaudio.transforms.Resample(sr, sample_rate)(audio)
+    if audio.shape[0] > 1:
+        audio = audio.mean(dim=0, keepdim=True)
+    audio = audio.squeeze(0).numpy()
+
+    window_samples = int(window_sec * sample_rate)
+    hop_samples = int(0.5 * sample_rate)
+    
+    if len(audio) < window_samples:
+        audio = np.pad(audio, (0, window_samples - len(audio)))
+        
+    buffer = RingBuffer(window_samples, hop_samples)
+    windows = buffer.push(audio)
+    
+    logits = []
+    latencies = []
+    for w in windows:
+        if not has_speech(w, sample_rate):
+            continue
+        logit, _, lat = adapter.predict_window(w)
+        logits.append(logit)
+        latencies.append(lat)
+        
+    if not logits:
+        # Fallback if no speech
+        for w in windows:
+            logit, _, lat = adapter.predict_window(w)
+            logits.append(logit)
+            latencies.append(lat)
+            
+    final_logit = aggregate_logits(logits, method="mean")
+    avg_lat = float(np.mean(latencies)) if latencies else 0.0
+    return final_logit, avg_lat
 
 def score_slice(
     df_slice: pd.DataFrame,
@@ -78,35 +132,13 @@ def score_slice(
     for _, row in df_slice.iterrows():
         audio_path = str(row["path"])
         try:
-            try:
-                audio_np, sr = sf.read(audio_path, dtype="float32")
-                audio = torch.from_numpy(audio_np)
-                if audio.ndim == 1:
-                    audio = audio.unsqueeze(0)
-            except Exception:
-                audio, sr = torchaudio.load(audio_path)
-
-            if sr != sample_rate:
-                audio = torchaudio.transforms.Resample(sr, sample_rate)(audio)
-            if audio.shape[0] > 1:
-                audio = audio.mean(dim=0, keepdim=True)
-            audio = audio.squeeze(0)
-
-            # Centre-crop / pad
-            if audio.shape[0] < window_samples:
-                audio = torch.nn.functional.pad(audio, (0, window_samples - audio.shape[0]))
-            elif audio.shape[0] > window_samples:
-                start = (audio.shape[0] - window_samples) // 2
-                audio = audio[start: start + window_samples]
-
-            logit, _, lat = adapter.predict_window(audio.numpy())
+            logit, lat = process_file_logits(audio_path, adapter, sample_rate, window_sec)
             latencies.append(lat)
 
             if row["label"] == "bonafide":
                 bonafide_scores.append(logit)
             else:
                 spoof_scores.append(logit)
-
         except Exception as exc:
             print(f"  [WARN] Could not load {audio_path}: {exc}")
             continue
@@ -129,27 +161,10 @@ def _score_single_class(df_slice, adapter, sample_rate, window_sec):
 
     for _, row in df_slice.iterrows():
         try:
-            try:
-                audio_np, sr = sf.read(str(row["path"]), dtype="float32")
-                audio = torch.from_numpy(audio_np)
-                if audio.ndim == 1:
-                    audio = audio.unsqueeze(0)
-            except Exception:
-                audio, sr = torchaudio.load(str(row["path"]))
-            if sr != sample_rate:
-                audio = torchaudio.transforms.Resample(sr, sample_rate)(audio)
-            if audio.shape[0] > 1:
-                audio = audio.mean(dim=0, keepdim=True)
-            audio = audio.squeeze(0)
-            if audio.shape[0] < window_samples:
-                audio = torch.nn.functional.pad(audio, (0, window_samples - audio.shape[0]))
-            elif audio.shape[0] > window_samples:
-                start = (audio.shape[0] - window_samples) // 2
-                audio = audio[start: start + window_samples]
-            logit, _, _ = adapter.predict_window(audio.numpy())
+            logit, _ = process_file_logits(str(row["path"]), adapter, sample_rate, window_sec)
             scores.append(logit)
             is_spoof.append(row["label"] == "spoof")
-        except Exception:
+        except Exception as exc:
             continue
 
     if not scores:

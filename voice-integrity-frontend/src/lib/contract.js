@@ -21,16 +21,16 @@ export function qualityText(reason) {
 // --- formatters -----------------------------------------------------------
 
 export function pct(p, digits = 0) {
-  if (p == null || Number.isNaN(p)) return "—";
+  if (p == null || Number.isNaN(p)) return "N/A";
   return `${(p * 100).toFixed(digits)}%`;
 }
 
 export function fixed(x, digits = 2) {
-  if (x == null || Number.isNaN(x)) return "—";
+  if (x == null || Number.isNaN(x)) return "N/A";
   return Number(x).toFixed(digits);
 }
 
 export function ms(x) {
-  if (x == null || Number.isNaN(x)) return "—";
+  if (x == null || Number.isNaN(x)) return "N/A";
   return `${Number(x).toFixed(1)} ms`;
 }

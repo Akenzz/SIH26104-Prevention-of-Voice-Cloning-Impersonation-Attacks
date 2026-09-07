@@ -56,15 +56,17 @@ class SpeechDataset(Dataset):
     ):
         # Accept 'eval' as an alias for 'test' (data_pipeline uses 'eval',
         # our pipeline uses 'test' — both are valid here).
-        assert split in ("train", "dev", "test", "eval"), (
-            f"split must be 'train', 'dev', 'test' (or 'eval'), got '{split}'"
+        # Accept 'eval' as an alias for 'test' and 'val' as an alias for 'dev'
+        assert split in ("train", "dev", "val", "test", "eval"), (
+            f"split must be 'train', 'dev', 'val', 'test' (or 'eval'), got '{split}'"
         )
 
         df = pd.read_csv(manifest_csv)
-        # Treat 'eval' rows as 'test' so a single split argument finds both.
-        df["split"] = df["split"].replace({"eval": "test"})
+        df["split"] = df["split"].replace({"eval": "test", "val": "dev"})
         if split == "eval":
             split = "test"
+        elif split == "val":
+            split = "dev"
         self.data = df[df["split"] == split].reset_index(drop=True)
         self.window_samples = window_samples
 

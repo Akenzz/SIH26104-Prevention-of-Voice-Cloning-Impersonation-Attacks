@@ -29,7 +29,7 @@ import numpy as np
 import torch
 
 from config import HUB_EXPERTS, TARGET_SAMPLE_RATE, WINDOW_SEC
-from .hub import ensure_checkpoint, torch_load_checkpoint
+from .hub import ensure_checkpoint, get_hf_file_metadata, hf_hub_url, torch_load_checkpoint
 from .protocol import Score
 
 logger = logging.getLogger("realtime_backend.experts")
@@ -42,8 +42,55 @@ _LOCAL_CHECKPOINT = (
     Path(__file__).resolve().parent.parent.parent   # repo root
     / "wavlm-base-plus"
     / "checkpoints"
-    / "best_model_v4.pt"
+    / "best_model_v5.pt"
 )
+
+
+def _remote_checkpoint_is_stale(repo_id: str, filename: str, local: Path) -> bool:
+    """Return True when the local file differs from the current Hub artifact.
+
+    This stops stale local checkpoints from overriding a freshly uploaded model
+    after a pull/update. If the remote metadata is unavailable, we treat the
+    local copy as current so offline startup still works.
+    """
+    if not local.exists() or local.stat().st_size <= 0:
+        return True
+    try:
+        meta = get_hf_file_metadata(hf_hub_url(repo_id=repo_id, filename=filename), timeout=10)
+    except Exception:
+        return False
+    remote_size = getattr(meta, "size", None)
+    if remote_size is None:
+        return False
+    local_size = local.stat().st_size
+    return remote_size != local_size
+
+
+def _resolve_wavlm_checkpoint(cache_dir: Path) -> Path:
+    """Prefer the Hub copy whenever the local repo checkpoint is stale."""
+    spec = HUB_EXPERTS["wavlm"]
+    local_path = _LOCAL_CHECKPOINT
+    if local_path.exists() and local_path.stat().st_size > 0:
+        if not _remote_checkpoint_is_stale(spec["repo_id"], spec["filename"], local_path):
+            logger.info("WavLM: using LOCAL checkpoint: %s", local_path)
+            return local_path
+        logger.info(
+            "WavLM: local checkpoint is stale at %s — redownloading from Hub (%s/%s).",
+            local_path,
+            spec["repo_id"],
+            spec["filename"],
+        )
+    else:
+        logger.info(
+            "WavLM: local checkpoint not found at %s — downloading from Hub.",
+            local_path,
+        )
+    return ensure_checkpoint(
+        repo_id=spec["repo_id"],
+        filename=spec["filename"],
+        cache_dir=cache_dir,
+        local_name=spec["local_name"],
+    )
 
 
 def _add_wavlm_to_path() -> None:
@@ -79,21 +126,7 @@ class WavLMExpert:
         self.model: torch.nn.Module | None = None
 
         # ── Resolve checkpoint ─────────────────────────────────────────────────
-        if _LOCAL_CHECKPOINT.exists() and _LOCAL_CHECKPOINT.stat().st_size > 0:
-            self.checkpoint_path = _LOCAL_CHECKPOINT
-            logger.info("WavLM: using LOCAL checkpoint: %s", self.checkpoint_path)
-        else:
-            logger.info(
-                "WavLM: local checkpoint not found at %s — downloading from Hub.",
-                _LOCAL_CHECKPOINT,
-            )
-            spec = HUB_EXPERTS["wavlm"]
-            self.checkpoint_path = ensure_checkpoint(
-                repo_id=spec["repo_id"],
-                filename=spec["filename"],
-                cache_dir=cache_dir,
-                local_name=spec["local_name"],
-            )
+        self.checkpoint_path = _resolve_wavlm_checkpoint(cache_dir)
 
         self._blob = torch_load_checkpoint(
             self.checkpoint_path, map_location=str(self.device)
