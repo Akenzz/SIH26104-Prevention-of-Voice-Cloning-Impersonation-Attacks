@@ -110,11 +110,9 @@ HUB_EXPERTS = {
 # Human-facing labels for the frontend, so the UI never has to hardcode names.
 # ASCII only — these are echoed straight into JSON.
 EXPERT_LABELS = {
-    "wavlm": "Expert-1: WavLM Base+",
-    "hybrid": "Expert-2: LFCC-LCNN Hybrid (Fine-Tuned)",
-    "ssl": "Expert-3: TakHemlata SSL",
-    "hybrid_br": "Expert-2c: LFCC-LCNN Hybrid (bandwidth-robust)",
-    "hybrid_maxbr": "Expert-2d: LFCC-LCNN Max (132 generators, bandwidth-robust)",
+    "wavlm":       "Expert-1: WavLM Base+ (v5)",
+    "ssl":         "Expert-2: TakHemlata SSL",
+    "hybrid_maxbr": "Expert-3: LFCC-LCNN Max (132 generators, bandwidth-robust)",
 }
 
 # Per-expert Platt calibrators. Each expert's logits live on their own scale, so
@@ -150,7 +148,7 @@ class Settings:
     target_sample_rate: int = TARGET_SAMPLE_RATE
     window_sec: float = WINDOW_SEC
     hop_sec: float = HOP_SEC
-    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid,ssl"))
+    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,ssl,hybrid_maxbr"))
     fusion_mode: str = os.environ.get("FUSION_MODE", "heuristic_avg")
     single_expert: str = os.environ.get("SINGLE_EXPERT", "hybrid")
     ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.3"))
@@ -200,7 +198,7 @@ def load_settings() -> Settings:
     if unknown:
         raise ValueError(
             f"Unknown expert(s) {unknown}. Known: {', '.join(HUB_EXPERTS)}, ssl. "
-            "The older lfcc/hindi/mc_v3/prosody experts were removed."
+            "The older lfcc/hindi/mc_v3/prosody/hybrid/hybrid_br experts were removed."
         )
     if settings.fusion_mode == "single":
         if not settings.single_expert:

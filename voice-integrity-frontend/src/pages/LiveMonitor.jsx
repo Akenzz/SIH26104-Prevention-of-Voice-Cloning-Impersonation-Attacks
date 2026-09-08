@@ -409,9 +409,9 @@ export default function LiveMonitor() {
                     {/* Render a line for each expert dynamically */}
                     {scores.length > 0 && scores[0].expert_probs && Object.keys(scores[0].expert_probs).map(expert => {
                       const color = {
-                        wavlm: "#3b82f6", // blue
-                        hybrid: "#ec4899", // pink
-                        ssl: "#eab308" // yellow
+                        wavlm: "#3b82f6",       // blue
+                        ssl: "#eab308",          // yellow
+                        hybrid_maxbr: "#ec4899", // pink
                       }[expert] || "#8b5cf6";
                       return (
                         <Line 

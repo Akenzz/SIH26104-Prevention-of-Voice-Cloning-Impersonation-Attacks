@@ -9,21 +9,25 @@ from .protocol import Expert
 
 logger = logging.getLogger("realtime_backend.experts")
 
-# LFCC-LCNN checkpoints trained WITH the parity band gate. They share one load
-# path because the gate is read from the checkpoint, not from this table -- adding
-# a name here is all a new gated LFCC checkpoint needs, and _assert_band_gates_applied
-# below still verifies each one independently.
-_BAND_GATED_LFCC = {"hybrid_br", "hybrid_maxbr"}
+# LFCC-LCNN checkpoints trained WITH the parity band gate. Only hybrid_maxbr
+# is the active decision expert; the set is kept as a set so additional
+# band-gated checkpoints can be added here without touching load_experts().
+_BAND_GATED_LFCC = {"hybrid_maxbr"}
 
 
 def load_experts(settings: Settings) -> dict[str, Expert]:
     """Instantiate experts named in settings.experts.
 
-    Three Hub experts are wired: `wavlm` (WavLM Base+), `hybrid` (6-language
-    LFCC-LCNN clean-model), and `hybrid_nc` (same arch, fine-tuned on 12 modern
-    engines, hosted at sarosh22/Hybrid_new). All pull their weights from
-    Hugging Face on first run and are cached under model_cache/.
-    Requesting an unwired name fails at startup instead of silently scoring.
+    Active expert lineup (3 experts):
+      wavlm         WavLM Base+ v5   (Akenzz/SIH-Models :: wavlm_best_model_v5.pt)
+      ssl           TakHemlata SSL   (Akenzz/SIH-Models :: best_SSL_model_LA.pth)
+      hybrid_maxbr  LFCC-LCNN Max    (sarosh22/Final_LFCC :: hybrid_maxbr_best.pth)
+                    -- trained on 84k chunks / 132 generators; applies 7 kHz parity
+                       band gate; current decision expert.
+
+    All pull their weights from Hugging Face on first run and are cached under
+    model_cache/. Requesting an unwired name fails at startup instead of silently
+    scoring. Removed: hybrid, hybrid_br (intermediate LFCC checkpoints).
     """
     loaded: dict[str, Expert] = {}
     for name in settings.experts:
@@ -36,21 +40,6 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
             from .wavlm import WavLMExpert
 
             loaded[key] = WavLMExpert(cache_dir=settings.model_cache_dir, device=settings.device)
-            continue
-        if key == "hybrid":
-            # LFCC-LCNN, hybrid clean-model checkpoint (6 languages, 130 spoof
-            # generators, language-paired to kill the channel=label shortcut).
-            # Scored with artifacts/calibrator_hybrid_clean.json — every other
-            # calibrator in artifacts/ was fitted on a different expert's logit
-            # scale and would misread these.
-            from .lfcc import LFCCLCNNExpert
-
-            loaded[key] = LFCCLCNNExpert(
-                cache_dir=settings.model_cache_dir,
-                device=settings.device,
-                hub_key="hybrid",
-                name="hybrid",
-            )
             continue
         if key == "ssl":
             # The merge left this calling SSLExpert() with no args, but its
@@ -66,12 +55,9 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
             # gate. The gate lives in the checkpoint and is applied inside
             # LFCCLCNNExpert.score(), so nothing here (or in the pipeline) needs
             # to know the cutoff -- and it cannot be applied twice.
-            # These are the only LFCC experts whose verdict does not depend on
-            # which resampler produced the audio (0.03 vs 13.35 logit gap).
-            #   hybrid_br    -- warm-start fine-tune, local-only checkpoint
-            #   hybrid_maxbr -- from-scratch on the 84k-chunk / 132-generator
-            #                   merged corpus, hosted at sarosh22/Final_LFCC,
-            #                   and the current decision expert
+            # hybrid_maxbr -- from-scratch on the 84k-chunk / 132-generator
+            #                 merged corpus, hosted at sarosh22/Final_LFCC,
+            #                 and the current decision expert.
             from .lfcc import LFCCLCNNExpert
 
             loaded[key] = LFCCLCNNExpert(
@@ -82,7 +68,7 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
             )
             continue
         raise ValueError(
-            f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid, ssl, "
+            f"Unknown expert {name!r}. Known: dummy, wavlm, ssl, "
             f"{', '.join(sorted(_BAND_GATED_LFCC))}"
         )
     if not loaded:

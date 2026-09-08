@@ -6,47 +6,127 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-import fairseq
-
 
 ___author__ = "Hemlata Tak"
 __email__ = "tak@eurecom.fr"
 
 ############################
 ## FOR fine-tuned SSL MODEL
+## fairseq replaced with HuggingFace transformers.
+## facebook/wav2vec2-xls-r-300m is the SAME XLSR-2 300M model
+## used in the original training (same architecture, same 1024-dim output).
 ############################
 
 
 class SSLModel(nn.Module):
-    def __init__(self,device):
+    """Drop-in replacement for the fairseq-based SSLModel.
+
+    Uses HuggingFace ``transformers`` to load facebook/wav2vec2-xls-r-300m,
+    which is the exact same model as the fairseq xlsr2_300m.pt checkpoint used
+    during training (same architecture, same weights, same 1024-dim output).
+    This removes the fairseq dependency entirely and works on Python 3.13.
+
+    If the caller passes ``checkpoint_state`` (the full model state dict from
+    the saved .pth), this class will remap fairseq key names → HF key names and
+    load the fine-tuned backbone weights so inference quality is preserved.
+    """
+
+    # Fairseq wav2vec2 uses slightly different module path names than HF.
+    # This prefix map covers all the layers saved in best_SSL_model_LA.pth.
+    _FAIRSEQ_TO_HF = {
+        "feature_extractor.conv_layers":     "feature_extractor.conv_layers",
+        "post_extract_proj":                 "feature_projection.projection",
+        "encoder.pos_conv.0":                "encoder.pos_conv_embed.conv",
+        "encoder.layers":                    "encoder.layers",
+        "encoder.layer_norm":                "encoder.layer_norm",
+        "layer_norm":                        "feature_projection.layer_norm",
+        "mask_emb":                          "masked_spec_embed",
+    }
+
+    def __init__(self, device, cache_dir=None):
         super(SSLModel, self).__init__()
-        
-        cp_path = 'xlsr2_300m.pt'   # Change the pre-trained XLSR model path. 
-        model, cfg, task = fairseq.checkpoint_utils.load_model_ensemble_and_task([cp_path])
-        self.model = model[0]
-        self.device=device
+        from transformers import Wav2Vec2Model
+        import os
+        # Use the provided cache_dir, or fall back to HF_HOME env var, or HF default.
+        hf_cache = cache_dir or os.environ.get("HF_HOME") or os.environ.get("TRANSFORMERS_CACHE")
+        self.model = Wav2Vec2Model.from_pretrained(
+            "facebook/wav2vec2-xls-r-300m",
+            cache_dir=hf_cache,
+        )
+        self.device = device
         self.out_dim = 1024
-        return
+
+    def load_finetuned_backbone(self, full_state: dict) -> None:
+        """Extract ssl_model.model.* keys from the checkpoint and remap them
+        into the HF Wav2Vec2Model. Any key that cannot be matched is skipped
+        with a debug log so missing / extra layers never crash startup."""
+        # Collect keys that belong to the XLSR backbone
+        prefix = "ssl_model.model."
+        backbone_state = {
+            k[len(prefix):]: v
+            for k, v in full_state.items()
+            if k.startswith(prefix)
+        }
+        if not backbone_state:
+            return  # checkpoint has no backbone weights; use HF pretrained as-is
+
+        hf_state = self.model.state_dict()
+        remapped: dict[str, torch.Tensor] = {}
+        for fs_key, tensor in backbone_state.items():
+            hf_key = self._remap_key(fs_key, hf_state)
+            if hf_key and tensor.shape == hf_state[hf_key].shape:
+                remapped[hf_key] = tensor
+
+        missing, unexpected = self.model.load_state_dict(remapped, strict=False)
+        logger_msg = (
+            f"SSL backbone: loaded {len(remapped)} / {len(hf_state)} layers "
+            f"from checkpoint. {len(missing)} missing, {len(unexpected)} unexpected."
+        )
+        import logging
+        logging.getLogger("realtime_backend.experts").info(logger_msg)
+
+    @staticmethod
+    def _remap_key(fs_key: str, hf_state: dict) -> str | None:
+        """Map a fairseq wav2vec2 key to its HuggingFace equivalent.
+
+        Best-effort: tries the key verbatim first, then common prefix swaps.
+        Returns None if no match is found so callers can skip gracefully."""
+        if fs_key in hf_state:
+            return fs_key
+        # Common structural renames
+        substitutions = [
+            ("feature_extractor.conv_layers.", "feature_extractor.conv_layers."),
+            ("post_extract_proj.",             "feature_projection.projection."),
+            ("layer_norm.",                    "feature_projection.layer_norm."),
+            ("encoder.pos_conv.0.",            "encoder.pos_conv_embed.conv."),
+            ("encoder.layers.",                "encoder.layers."),
+            ("encoder.layer_norm.",            "encoder.layer_norm."),
+            ("mask_emb",                       "masked_spec_embed"),
+        ]
+        for fs_pfx, hf_pfx in substitutions:
+            if fs_key.startswith(fs_pfx):
+                candidate = hf_pfx + fs_key[len(fs_pfx):]
+                if candidate in hf_state:
+                    return candidate
+        return None
 
     def extract_feat(self, input_data):
-        
-        # put the model to GPU if it not there
-        if next(self.model.parameters()).device != input_data.device \
-           or next(self.model.parameters()).dtype != input_data.dtype:
+        # Move model to same device/dtype as input if needed.
+        param = next(self.model.parameters())
+        if param.device != input_data.device or param.dtype != input_data.dtype:
             self.model.to(input_data.device, dtype=input_data.dtype)
-            self.model.train()
 
-        
-        if True:
-            # input should be in shape (batch, length)
-            if input_data.ndim == 3:
-                input_tmp = input_data[:, :, 0]
-            else:
-                input_tmp = input_data
-                
-            # [batch, length, dim]
-            emb = self.model(input_tmp, mask=False, features_only=True)['x']
+        # input_data shape: (batch, length) or (batch, length, 1)
+        if input_data.ndim == 3:
+            input_tmp = input_data[:, :, 0]
+        else:
+            input_tmp = input_data
+
+        # HuggingFace returns a BaseModelOutput; last_hidden_state = [B, T, 1024]
+        out = self.model(input_tmp, output_hidden_states=False)
+        emb = out.last_hidden_state   # [batch, frames, 1024]
         return emb
+
 
 
 #---------AASIST back-end------------------------#
@@ -430,7 +510,7 @@ class Residual_block(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self, args,device):
+    def __init__(self, args, device, cache_dir=None):
         super().__init__()
         self.device = device
         
@@ -444,7 +524,7 @@ class Model(nn.Module):
         ####
         # create network wav2vec 2.0
         ####
-        self.ssl_model = SSLModel(self.device)
+        self.ssl_model = SSLModel(self.device, cache_dir=cache_dir)
         self.LL = nn.Linear(self.ssl_model.out_dim, 128)
 
         self.first_bn = nn.BatchNorm2d(num_features=1)

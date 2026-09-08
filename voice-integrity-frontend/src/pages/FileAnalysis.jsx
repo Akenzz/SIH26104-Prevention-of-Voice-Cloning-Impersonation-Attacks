@@ -9,9 +9,9 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 
 const FUSION_MODES = [
   { key: 'heuristic_avg', label: 'Simple Average (3-Expert)', dataKey: 'heuristic_avg_probability', color: '#f97316' },
-  { key: 'wavlm',         label: 'WavLM Only',              dataKey: 'per_expert_probability.wavlm', color: '#3b82f6' },
-  { key: 'hybrid',        label: 'LFCC-LCNN Only',          dataKey: 'per_expert_probability.hybrid', color: '#ec4899' },
-  { key: 'ssl',           label: 'TakHemlata SSL Only',     dataKey: 'per_expert_probability.ssl',   color: '#eab308' },
+  { key: 'wavlm',         label: 'WavLM v5 Only',             dataKey: 'per_expert_probability.wavlm',        color: '#3b82f6' },
+  { key: 'ssl',           label: 'SSL Only',                  dataKey: 'per_expert_probability.ssl',           color: '#eab308' },
+  { key: 'hybrid_maxbr',  label: 'LFCC-Max Only',             dataKey: 'per_expert_probability.hybrid_maxbr',  color: '#ec4899' },
 ];
 
 export default function FileAnalysis() {
@@ -358,7 +358,7 @@ export default function FileAnalysis() {
                   const prob   = typeof e.probability === 'number' ? e.probability : null;
                   const pct    = prob != null ? (prob * 100).toFixed(1) : null;
                   const barClr = prob > 0.65 ? '#ef4444' : prob > 0.35 ? '#f97316' : '#22c55e';
-                  const expertWeights = { wavlm: 20, hybrid: 20, ssl: 60 };
+                  const expertWeights = { wavlm: 33, ssl: 33, hybrid_maxbr: 34 };
                   const weight = expertWeights[expert];
 
                   return (
@@ -486,9 +486,9 @@ export default function FileAnalysis() {
                     <ReferenceLine y={0.35} stroke="#10b981" strokeDasharray="3 3" opacity={0.3} />
                     <ReferenceLine y={0.65} stroke="#ef4444" strokeDasharray="3 3" opacity={0.3} />
 
-                    <Line type="monotone" dataKey="per_expert_probability.wavlm"  name="WavLM"        stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'wavlm'         ? 0 : 0.45} />
-                    <Line type="monotone" dataKey="per_expert_probability.hybrid" name="LFCC-LCNN"    stroke="#ec4899" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'hybrid'        ? 0 : 0.45} />
-                    <Line type="monotone" dataKey="per_expert_probability.ssl"    name="SSL"          stroke="#eab308" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'ssl'           ? 0 : 0.45} />
+                    <Line type="monotone" dataKey="per_expert_probability.wavlm"        name="WavLM v5"    stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'wavlm'        ? 0 : 0.45} />
+                    <Line type="monotone" dataKey="per_expert_probability.ssl"           name="SSL"        stroke="#eab308" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'ssl'          ? 0 : 0.45} />
+                    <Line type="monotone" dataKey="per_expert_probability.hybrid_maxbr"  name="LFCC-Max"   stroke="#ec4899" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'hybrid_maxbr' ? 0 : 0.45} />
                     <Line type="monotone" dataKey="weighted_probability"          name="Weighted Avg" stroke="#f97316" strokeWidth={1.5} strokeDasharray="4 4" dot={false} opacity={selectedMode === 'heuristic_avg' ? 0 : 0.45} />
 
                     {/* Selected mode promoted to bold white primary line */}
