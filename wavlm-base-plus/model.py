@@ -52,9 +52,18 @@ class WavLMClassifier(nn.Module):
         print(f"[model] Loading backbone: {backbone_name}")
         self.backbone = WavLMModel.from_pretrained(backbone_name, use_safetensors=False)
 
-        # Freeze ALL backbone parameters — no gradient updates ever.
+        # Freeze all backbone parameters first
         for param in self.backbone.parameters():
             param.requires_grad = False
+
+        # Then selectively unfreeze the top 4 transformer encoder layers.
+        # These learn task-specific high-level patterns (spoof artifacts, spectral shape).
+        # Lower layers (phoneme detectors, basic acoustics) stay frozen — safe to reuse.
+        N_UNFREEZE = 4
+        for layer in self.backbone.encoder.layers[-N_UNFREEZE:]:
+            for param in layer.parameters():
+                param.requires_grad = True
+
         self.backbone.eval()  # keep BN / dropout in eval mode during training too
 
         # ── Trainable classification head ──────────────────────────────────────

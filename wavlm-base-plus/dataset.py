@@ -28,6 +28,7 @@ from torch.utils.data import Dataset
 
 # ─── Configurable constants ────────────────────────────────────────────────────
 TARGET_SR      = 16_000          # All audio resampled to 16 kHz mono
+BAND_GATE_HZ   = 7000            # below this, librosa and scipy agree to ≤0.7 dB
 WINDOW_SECONDS = 4               # Fixed window length in seconds
 WINDOW_SAMPLES = TARGET_SR * WINDOW_SECONDS   # 64 000 samples per clip
 
@@ -106,11 +107,29 @@ class SpeechDataset(Dataset):
             resampler = Resample(orig_freq=sr, new_freq=TARGET_SR)
             waveform  = resampler(waveform)
 
+        if BAND_GATE_HZ:
+            import torchaudio.functional as F_audio
+            waveform = F_audio.lowpass_biquad(
+                waveform,
+                sample_rate=TARGET_SR,
+                cutoff_freq=float(BAND_GATE_HZ),
+            )
+
         # ── Pad or crop to fixed window length ─────────────────────────────────
         waveform = _pad_or_crop(waveform, self.window_samples)   # (1, W)
 
         # Remove the channel dimension; model expects (W,)
         waveform = waveform.squeeze(0)
+
+        if self.split == 'train':
+            # Additive white noise at random SNR (15–40 dB)
+            snr_db = float(torch.empty(1).uniform_(15, 40))
+            rms = waveform.pow(2).mean().sqrt().clamp(min=1e-9)
+            noise_rms = rms / (10 ** (snr_db / 20))
+            waveform = waveform + noise_rms * torch.randn_like(waveform)
+            # Volume jitter ±3 dB
+            gain_db = float(torch.empty(1).uniform_(-3, 3))
+            waveform = (waveform * 10 ** (gain_db / 20)).clamp(-1.0, 1.0)
 
         return waveform.float(), torch.tensor(label, dtype=torch.long)
 

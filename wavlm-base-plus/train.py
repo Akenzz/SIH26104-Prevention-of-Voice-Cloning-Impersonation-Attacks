@@ -146,15 +146,31 @@ def main(args):
     # ── Model ─────────────────────────────────────────────────────────────────
     model = WavLMClassifier().to(device)
 
-    # Optimizer only sees the head parameters — backbone is frozen.
     head_params = list(model.head.parameters())
-    print(f"[train] Trainable head parameters: "
-          f"{sum(p.numel() for p in head_params):,}")
+    unfrozen_backbone = [
+        p for layer in model.backbone.encoder.layers[-4:]
+        for p in layer.parameters()
+    ]
+    backbone_params = unfrozen_backbone
+    print(f"[train] Trainable params: head={sum(p.numel() for p in head_params):,} "
+          f"backbone_top4={sum(p.numel() for p in backbone_params):,}")
 
-    optimizer = torch.optim.AdamW(
-        head_params, lr=args.lr, weight_decay=WEIGHT_DECAY
+    optimizer = torch.optim.AdamW([
+        {"params": model.head.parameters(), "lr": args.lr},
+        {"params": unfrozen_backbone, "lr": args.lr * 0.005},
+    ], weight_decay=WEIGHT_DECAY)
+
+    from collections import Counter
+    counts = Counter(train_ds.data['label'].values)
+    n_bonafide = counts.get('bonafide', 1)
+    n_spoof = counts.get('spoof', 1)
+    pos_weight_val = n_bonafide / n_spoof
+    print(f"[train] pos_weight = {pos_weight_val:.4f} "
+          f"(bonafide={n_bonafide:,} / spoof={n_spoof:,})")
+
+    criterion = nn.BCEWithLogitsLoss(
+        pos_weight=torch.tensor([pos_weight_val], device=device)
     )
-    criterion = nn.BCEWithLogitsLoss()
 
     # ── Checkpoint directory ───────────────────────────────────────────────────
     ckpt_dir = os.path.dirname(args.checkpoint)
@@ -203,6 +219,7 @@ def main(args):
                     "dev_loss"         : dev_loss,
                     "dev_acc"          : dev_acc,
                     "dev_eer"          : dev_eer,
+                    "band_gate_hz"     : 7000,
                 },
                 args.checkpoint,
             )

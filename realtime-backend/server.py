@@ -308,19 +308,19 @@ async def predict_file(file: UploadFile = File(...)):
                 
             # Probability-space fusion to match optimize_weights.py exactly
             p_w = smoothed_expert_probs.get("wavlm", 0.0)
-            p_l = smoothed_expert_probs.get("hybrid", 0.0)
+            p_l = smoothed_expert_probs.get("hybrid_maxbr", 0.0)
             p_s = smoothed_expert_probs.get("ssl", 0.0)
-            W_WAVLM, W_LFCC, W_SSL = 0.20, 0.20, 0.60
+            W_WAVLM, W_LFCC, W_SSL = 0.50, 0.50, 0.00
             
             experts_present = (
                 ("wavlm" in smoothed_expert_probs) * W_WAVLM +
-                ("hybrid" in smoothed_expert_probs) * W_LFCC +
+                ("hybrid_maxbr" in smoothed_expert_probs) * W_LFCC +
                 ("ssl"   in smoothed_expert_probs) * W_SSL
             )
             if experts_present > 0:
                 probability = float((p_w * W_WAVLM + p_l * W_LFCC + p_s * W_SSL) / experts_present)
             else:
-                probability = float((p_w + p_l + p_s) / 3.0)
+                probability = float((p_w + p_l + p_s) / 2.0)
                 
             # Agreement override
             if p_l > 0.85 and (p_w > 0.60 or p_s > 0.60):

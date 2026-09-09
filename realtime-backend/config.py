@@ -120,7 +120,7 @@ EXPERT_LABELS = {
 # still comes from SINGLE_EXPERT via CALIBRATOR_PATH; these are what let the UI
 # show a meaningful probability for BOTH models side by side.
 EXPERT_CALIBRATORS = {
-    "wavlm": ARTIFACTS_DIR / "platt_v5.json",
+    "wavlm": ARTIFACTS_DIR / "platt_v6.json",
     "hybrid": ARTIFACTS_DIR / "calibrator_hybrid_newclips.json",
     "ssl": ARTIFACTS_DIR / "platt_ssl.json",
     # hybrid_br is calibrated on GATED dev audio (lfcc-detector/fit_calibrator_br.py,
@@ -148,7 +148,7 @@ class Settings:
     target_sample_rate: int = TARGET_SAMPLE_RATE
     window_sec: float = WINDOW_SEC
     hop_sec: float = HOP_SEC
-    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,ssl,hybrid_maxbr"))
+    experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid_maxbr"))
     fusion_mode: str = os.environ.get("FUSION_MODE", "heuristic_avg")
     single_expert: str = os.environ.get("SINGLE_EXPERT", "hybrid")
     ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.3"))
