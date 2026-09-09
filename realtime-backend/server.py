@@ -154,7 +154,7 @@ async def lifespan(_app: FastAPI):
         settings.fusion_mode, settings.single_expert,
         settings.calibrator_path, EXPERT_CALIBRATORS,
     )
-    print("all 3 loaded, server started!")
+    print("The 2 models loaded, server started!")
     print("you can now use the Frontend!")
     yield
 
