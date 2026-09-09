@@ -212,12 +212,12 @@ void main() {
     test('initializes in Caller mode with default endpoint', () {
       final service = LiveCallService();
       expect(service.mode, CallMode.caller);
-      expect(service.serverHost, '127.0.0.1');
-      expect(service.serverPort, 8001);
+      expect(service.serverHost, 'codequantum.in');
+      expect(service.serverPort, 443);
       expect(service.isSpoofActive, isFalse);
       expect(service.spoofSpeaker, 'Teammate 3');
       expect(service.isConnected, isFalse);
-      expect(service.webSocketUrl, 'ws://127.0.0.1:8001/ws/caller');
+      expect(service.webSocketUrl, 'wss://codequantum.in/relay/ws/caller');
     });
 
     test('builds WebSocket URLs correctly for different hosts, ports, and protocols', () {

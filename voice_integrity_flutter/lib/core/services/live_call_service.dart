@@ -30,11 +30,14 @@ class LiveCallService {
   final _reasoningLogsController =
       StreamController<List<ReasoningLogEntry>>.broadcast();
 
+  static const String defaultHost = 'codequantum.in';
+  static const int defaultPort = 443;
+
   // State
   CallMode _mode = CallMode.caller;
   CallConnectionState _connectionState = CallConnectionState.idle;
-  String _serverHost = '127.0.0.1';
-  int _serverPort = 8001;
+  String _serverHost = defaultHost;
+  int _serverPort = defaultPort;
   bool _useSimulationMode = false;
   bool _isSpoofActive = false;
   String _spoofSpeaker = 'Teammate 3';

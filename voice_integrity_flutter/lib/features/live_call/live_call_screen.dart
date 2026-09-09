@@ -1410,7 +1410,42 @@ class _ConnectionControlCard extends StatelessWidget {
             if (showSettings) ...[
               const SizedBox(height: 16),
               const Divider(color: AppColors.line, height: 1),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  const Text(
+                    'Presets: ',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.mutedInk,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  ActionChip(
+                    label: const Text('Cloud VPS (Default)'),
+                    labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () {
+                      hostController.text = 'codequantum.in';
+                      portController.text = '443';
+                      onApplySettings();
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  ActionChip(
+                    label: const Text('Localhost:8001'),
+                    labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () {
+                      hostController.text = '127.0.0.1';
+                      portController.text = '8001';
+                      onApplySettings();
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   Expanded(
@@ -1433,7 +1468,7 @@ class _ConnectionControlCard extends StatelessWidget {
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
                         labelText: 'Port',
-                        hintText: '8001',
+                        hintText: '443',
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -1445,6 +1480,18 @@ class _ConnectionControlCard extends StatelessWidget {
                     child: const Text('Save'),
                   ),
                 ],
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Resolved URL: ${service.webSocketUrl}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                    color: AppColors.mutedInk,
+                  ),
+                ),
               ),
               const SizedBox(height: 12),
               SwitchListTile(
