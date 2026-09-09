@@ -11,6 +11,9 @@ dependencies:
     sdk: flutter
   file_picker: ^10.3.8
   http: ^1.6.0
+  web_socket_channel: ^3.0.3
+  record: ^6.2.1
+  audioplayers: ^6.7.1
 
 dev_dependencies:
   flutter_test:

@@ -45,5 +45,7 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Voice Integrity requires microphone access for real-time speech integrity analysis and live demo calls.</string>
 </dict>
 </plist>

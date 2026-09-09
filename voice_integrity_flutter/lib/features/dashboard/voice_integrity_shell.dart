@@ -6,10 +6,12 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/models/voice_models.dart';
+import '../../core/services/live_call_service.dart';
 import '../../core/services/voice_integrity_api.dart';
 import '../../core/theme/app_theme.dart';
+import '../live_call/live_call_screen.dart';
 
-enum _Destination { overview, analysis, live, models }
+enum _Destination { overview, analysis, liveCall, live, models }
 
 class VoiceIntegrityShell extends StatefulWidget {
   const VoiceIntegrityShell({super.key});
@@ -22,6 +24,7 @@ class _VoiceIntegrityShellState extends State<VoiceIntegrityShell> {
   final _endpointController = TextEditingController(
     text: 'http://127.0.0.1:8000',
   );
+  final _liveCallService = LiveCallService();
   _Destination _destination = _Destination.overview;
   AnalysisReport _report = AnalysisReport.demo();
   BackendHealth? _health;
@@ -38,6 +41,7 @@ class _VoiceIntegrityShellState extends State<VoiceIntegrityShell> {
 
   @override
   void dispose() {
+    _liveCallService.dispose();
     _endpointController.dispose();
     super.dispose();
   }
@@ -78,6 +82,7 @@ class _VoiceIntegrityShellState extends State<VoiceIntegrityShell> {
         report: _report,
         onReport: _setReport,
       ),
+      _Destination.liveCall => LiveCallScreen(service: _liveCallService),
       _Destination.live => _LiveMonitorPage(
         report: _report,
         onReport: _setReport,
@@ -192,7 +197,8 @@ class _Navigation extends StatelessWidget {
   static const _items = [
     (_Destination.overview, 'Overview', Icons.grid_view_rounded),
     (_Destination.analysis, 'Review audio', Icons.audio_file_rounded),
-    (_Destination.live, 'Live demo', Icons.graphic_eq_rounded),
+    (_Destination.liveCall, 'Live call', Icons.phone_in_talk_rounded),
+    (_Destination.live, 'Guided demo', Icons.graphic_eq_rounded),
     (_Destination.models, 'Models', Icons.account_tree_outlined),
   ];
 
@@ -388,6 +394,11 @@ class _OverviewPage extends StatelessWidget {
                   icon: const Icon(Icons.upload_file_outlined),
                   label: const Text('Review an audio file'),
                 ),
+                FilledButton.tonalIcon(
+                  onPressed: () => onNavigate(_Destination.liveCall),
+                  icon: const Icon(Icons.phone_in_talk_rounded),
+                  label: const Text('Live fraud call demo'),
+                ),
                 OutlinedButton.icon(
                   onPressed: () => onNavigate(_Destination.live),
                   icon: const Icon(Icons.play_circle_outline_rounded),
@@ -483,6 +494,12 @@ class _MobileActionStack extends StatelessWidget {
         onPressed: () => onNavigate(_Destination.analysis),
         icon: const Icon(Icons.upload_file_outlined),
         label: const Text('Review an audio file'),
+      ),
+      const SizedBox(height: 10),
+      FilledButton.tonalIcon(
+        onPressed: () => onNavigate(_Destination.liveCall),
+        icon: const Icon(Icons.phone_in_talk_rounded),
+        label: const Text('Live fraud call demo'),
       ),
       const SizedBox(height: 10),
       OutlinedButton.icon(
@@ -838,13 +855,38 @@ class _SystemStatusCard extends StatelessWidget {
                   : '${health!.sampleRate ~/ 1000} kHz mono audio',
             ),
             if (healthError != null) ...[
-              const SizedBox(height: 16),
-              Text(
-                'Backend unavailable: ${_friendlyError(healthError!)}',
-                style: const TextStyle(
-                  color: AppColors.mutedInk,
-                  fontSize: 12,
-                  height: 1.35,
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.vermilion.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: AppColors.vermilion.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      color: AppColors.vermilion,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _friendlyError(healthError!),
+                        style: const TextStyle(
+                          color: AppColors.vermilion,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -1800,16 +1842,44 @@ class _EndpointCard extends StatelessWidget {
               ),
               if (health != null)
                 _ConnectionPill(connected: true, loading: false),
-              if (healthError != null)
-                Text(
-                  _friendlyError(healthError!),
-                  style: const TextStyle(
-                    color: AppColors.vermilion,
-                    fontSize: 12,
-                  ),
-                ),
             ],
           ),
+          if (healthError != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.vermilion.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: AppColors.vermilion.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.error_outline_rounded,
+                    color: AppColors.vermilion,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _friendlyError(healthError!),
+                      style: const TextStyle(
+                        color: AppColors.vermilion,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     ),
@@ -2237,11 +2307,16 @@ IconData _riskIcon(RiskState risk) => switch (risk) {
 };
 
 String _friendlyError(String raw) {
-  if (raw.contains('Connection refused') || raw.contains('SocketException')) {
-    return 'Cannot reach the configured backend. Start realtime-backend, then check the URL.';
+  if (raw.contains('Connection refused') ||
+      raw.contains('SocketException') ||
+      raw.contains('Connection closed') ||
+      raw.contains('ClientException') ||
+      raw.contains('Failed host lookup') ||
+      raw.contains('Broken pipe')) {
+    return 'Backend offline or unreachable at this URL.\n• For full model inspection & file analysis: start realtime-backend (python server.py on port 8000).\n• For the Live Fraud Call Demo: the Relay Service is active on port 8001.';
   }
-  if (raw.contains('Timed out')) {
-    return 'The backend did not respond in time. Check its model load and network access.';
+  if (raw.contains('Timed out') || raw.contains('TimeoutException')) {
+    return 'The backend did not respond in time (8s timeout). Check its model loading status in the terminal.';
   }
   return raw.replaceFirst('VoiceIntegrityApiException: ', '');
 }

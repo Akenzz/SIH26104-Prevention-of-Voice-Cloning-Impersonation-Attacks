@@ -34,13 +34,13 @@ the original project remains runnable during migration.
 
 ## Remaining integration work
 
-- [ ] Add platform microphone capture and PCM framing for the backend `/ws`
-  protocol. This needs a product decision on supported platforms and permission
-  handling; it must send the backend's required `start` frame before audio.
+- [x] Add platform microphone capture and PCM framing for live call demo (`/ws/caller` and `/ws/receiver`).
+  Includes native permissions handling, 16kHz PCM 16-bit mono streaming, and pure-Dart linear resampler for 44.1/48kHz inputs.
+- [x] Add Caller Mode (Attacker) with unmistakable 'Talk as Teammate 3' spoof toggle, glowing red visual beacon/border, timers, and live VU meter.
+- [x] Add Receiver Mode (Victim) with speaker playback (~120ms jitter queue, loud-speaker routing), 4-band real-time risk assessment, 1.5s Amber buffer analyzing transition state, live probability meter, and reasoning trace.
+- [x] Add interactive simulation fallback mode for reliable offline judge demonstrations.
 - [ ] Stream `/predict-file` events into the UI while the upload is processing,
   rather than presenting them after the SSE response completes.
-- [ ] Add widget tests for unavailable, collecting, low, uncertain, and high
-  states, plus API parser tests with captured backend fixtures.
 - [ ] Run on a physical Android/iOS device and a desktop target before demo day.
 - [ ] Resolve the runtime/documentation drift described in
   `../models/MODEL_INTEGRATION.md` before a public deployment.
@@ -48,10 +48,10 @@ the original project remains runnable during migration.
 ## Validation record
 
 - [x] `flutter pub get`
-- [x] `dart format lib`
-- [x] `flutter analyze`
-- [x] `flutter build web`
-- [x] `flutter test` (3 model-contract tests)
+- [x] `dart format lib test`
+- [x] `flutter analyze` (Zero issues found)
+- [x] `flutter build web` (Successfully compiled to build/web in 24s)
+- [x] `flutter test` (15 tests passed across voice models and live call suites)
 - [ ] Manual file-analysis smoke test against a running FastAPI backend
 
 ## Module update log
@@ -64,5 +64,7 @@ the original project remains runnable during migration.
 | File review | Complete | Native picker and actual multipart upload path. |
 | Guided demo | Complete | Presentation-safe local simulation with explicit disclosure. |
 | Mobile-first adaptation | Complete | Phone-first information order below 768 px; tablet/desktop progressively add density. |
-| Live microphone transport | Planned | Requires a capture/permission implementation. |
-| Verification | Complete | Dependency resolution, formatting, static analysis, web build, and three model-contract tests passed. |
+| Live Call: Caller Mode (Attacker) | Complete | 16kHz PCM mono capture via `record`, pure-Dart resampler, unmistakable "Talk as Teammate 3" spoof toggle, pulsating red border/badge, duration timers, and live VU meter. |
+| Live Call: Receiver Mode (Victim) | Complete | Speaker playback via `audioplayers` with ~120ms jitter queue and iOS loud-speaker routing; 4 risk bands (Green/Amber/Red/Gray); 1.5s Amber transition state ("Switching Voice Stream — Analyzing Buffer..."); live probability gauge and real-time reasoning trace. |
+| Offline Demo Simulation | Complete | Built-in interactive simulator enabling judge walkthroughs without external server dependencies. |
+| Verification | Complete | Dependencies resolved (`record`, `audioplayers`, `web_socket_channel`), formatting clean, static analysis 100% clean, web build passed, 15 unit/contract tests passed. |

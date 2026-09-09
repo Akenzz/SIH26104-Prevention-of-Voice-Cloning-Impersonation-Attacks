@@ -28,5 +28,7 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Voice Integrity requires microphone access for real-time speech capture and spoof detection.</string>
 </dict>
 </plist>
