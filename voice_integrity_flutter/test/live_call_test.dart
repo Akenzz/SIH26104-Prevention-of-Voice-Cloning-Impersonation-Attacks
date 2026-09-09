@@ -217,6 +217,36 @@ void main() {
       expect(service.isSpoofActive, isFalse);
       expect(service.spoofSpeaker, 'Teammate 3');
       expect(service.isConnected, isFalse);
+      expect(service.webSocketUrl, 'ws://127.0.0.1:8001/ws/caller');
+    });
+
+    test('builds WebSocket URLs correctly for different hosts, ports, and protocols', () {
+      final service = LiveCallService();
+
+      // Direct port 8001
+      service.setServerEndpoint('codequantum.in', 8001);
+      expect(service.webSocketUrl, 'ws://codequantum.in:8001/ws/caller');
+
+      // Receiver mode on port 8001
+      service.setMode(CallMode.receiver);
+      expect(service.webSocketUrl, 'ws://codequantum.in:8001/ws/receiver');
+      service.setMode(CallMode.caller);
+
+      // Port 443 with default codequantum.in relay path
+      service.setServerEndpoint('codequantum.in', 443);
+      expect(service.webSocketUrl, 'wss://codequantum.in/relay/ws/caller');
+
+      // Explicit https:// URL with subpath
+      service.setServerEndpoint('https://codequantum.in/relay', 8001);
+      expect(service.webSocketUrl, 'wss://codequantum.in/relay/ws/caller');
+
+      // Explicit wss:// URL
+      service.setServerEndpoint('wss://codequantum.in/relay', 443);
+      expect(service.webSocketUrl, 'wss://codequantum.in/relay/ws/caller');
+
+      // Custom LAN host with port
+      service.setServerEndpoint('192.168.1.50:8001', 8001);
+      expect(service.webSocketUrl, 'ws://192.168.1.50:8001/ws/caller');
     });
 
     test('switches mode cleanly', () {

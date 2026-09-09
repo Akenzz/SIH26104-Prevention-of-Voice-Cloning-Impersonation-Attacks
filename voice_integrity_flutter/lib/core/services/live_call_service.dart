@@ -65,6 +65,7 @@ class LiveCallService {
   String get serverHost => _serverHost;
   int get serverPort => _serverPort;
   bool get useSimulationMode => _useSimulationMode;
+  String get webSocketUrl => _buildWebSocketUrl();
 
   LiveRiskAssessment get currentAssessment => _currentAssessment;
   CallStats get stats => _stats;
@@ -104,19 +105,67 @@ class LiveCallService {
   }
 
   String _buildWebSocketUrl() {
-    final path = _mode == CallMode.caller ? '/ws/caller' : '/ws/receiver';
-    // Clean host in case user entered full URL or protocol
-    var cleanHost = _serverHost;
-    if (cleanHost.startsWith('ws://') || cleanHost.startsWith('http://')) {
-      cleanHost = cleanHost.replaceFirst(RegExp(r'^(ws|http)://'), '');
+    final endpoint = _mode == CallMode.caller ? 'ws/caller' : 'ws/receiver';
+    var input = _serverHost.trim();
+
+    // Check scheme preference if explicitly provided
+    bool isSecure = false;
+    if (input.startsWith('wss://') || input.startsWith('https://')) {
+      isSecure = true;
+      input = input.replaceFirst(RegExp(r'^(wss|https)://'), '');
+    } else if (input.startsWith('ws://') || input.startsWith('http://')) {
+      input = input.replaceFirst(RegExp(r'^(ws|http)://'), '');
     }
-    if (cleanHost.endsWith('/')) {
-      cleanHost = cleanHost.substring(0, cleanHost.length - 1);
+
+    // Extract any path component (e.g. "codequantum.in/relay" -> host="codequantum.in", path="relay")
+    String hostPart = input;
+    String subPath = '';
+    final slashIndex = input.indexOf('/');
+    if (slashIndex != -1) {
+      hostPart = input.substring(0, slashIndex);
+      subPath = input.substring(slashIndex + 1);
     }
-    if (cleanHost.contains(':')) {
-      cleanHost = cleanHost.split(':').first;
+
+    // Extract any embedded port from hostPart (e.g. "codequantum.in:8001")
+    int port = _serverPort;
+    if (hostPart.contains(':')) {
+      final parts = hostPart.split(':');
+      hostPart = parts[0];
+      final parsedPort = int.tryParse(parts[1]);
+      if (parsedPort != null) {
+        port = parsedPort;
+      }
+    } else if (isSecure && port == 8001) {
+      // If user specified wss:// or https:// and left default port 8001, route to standard SSL port 443
+      port = 443;
     }
-    return 'ws://$cleanHost:$_serverPort$path';
+
+    // If port is 443, treat as secure wss
+    if (port == 443) {
+      isSecure = true;
+    }
+
+    // Clean up subPath
+    while (subPath.endsWith('/')) {
+      subPath = subPath.substring(0, subPath.length - 1);
+    }
+    while (subPath.startsWith('/')) {
+      subPath = subPath.substring(1);
+    }
+
+    // If connecting over secure SSL (port 443 or wss) to codequantum.in and no subpath is given,
+    // default subpath to 'relay' so it matches the Apache reverse proxy (/relay/ws/caller)
+    if (isSecure && hostPart.contains('codequantum.in') && subPath.isEmpty) {
+      subPath = 'relay';
+    }
+
+    final scheme = isSecure ? 'wss' : 'ws';
+    final portSuffix = (isSecure && port == 443) || (!isSecure && port == 80)
+        ? ''
+        : ':$port';
+
+    final fullPath = subPath.isEmpty ? '/$endpoint' : '/$subPath/$endpoint';
+    return '$scheme://$hostPart$portSuffix$fullPath';
   }
 
   /// Connect to the WebSocket endpoint (or start simulation if enabled).

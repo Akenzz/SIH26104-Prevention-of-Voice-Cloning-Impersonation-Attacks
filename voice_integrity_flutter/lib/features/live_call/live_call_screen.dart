@@ -1353,7 +1353,7 @@ class _ConnectionControlCard extends StatelessWidget {
                         isSimulation
                             ? 'Simulation Demo Mode Active'
                             : (isConnected
-                                  ? 'Connected to ws://${service.serverHost}:${service.serverPort}'
+                                  ? 'Connected to ${service.webSocketUrl}'
                                   : state.label),
                         style: const TextStyle(
                           fontSize: 13,
@@ -1364,7 +1364,9 @@ class _ConnectionControlCard extends StatelessWidget {
                       Text(
                         isSimulation
                             ? 'Running self-contained realistic demo for offline judging'
-                            : 'Endpoint: /ws/${service.mode == CallMode.caller ? 'caller' : 'receiver'}',
+                            : (state == CallConnectionState.connecting
+                                  ? 'Target: ${service.webSocketUrl}'
+                                  : 'Endpoint: /ws/${service.mode == CallMode.caller ? 'caller' : 'receiver'}'),
                         style: const TextStyle(
                           fontSize: 11,
                           color: AppColors.mutedInk,
@@ -1417,7 +1419,7 @@ class _ConnectionControlCard extends StatelessWidget {
                       controller: hostController,
                       decoration: const InputDecoration(
                         labelText: 'WebSocket Host',
-                        hintText: '127.0.0.1 or LAN IP',
+                        hintText: 'codequantum.in or 127.0.0.1',
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
