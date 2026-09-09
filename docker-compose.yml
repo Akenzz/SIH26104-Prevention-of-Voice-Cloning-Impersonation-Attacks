@@ -15,7 +15,7 @@ services:
       # Optional: set GROQ_API_KEY if you want LLM narration
       # - GROQ_API_KEY=${GROQ_API_KEY:-}
     volumes:
-      # Persistent cache for HuggingFace model weights so restarts are instant
+      # Persistent cache for HuggingFace model weights so container rebuilds/restarts are instant
       - realtime_model_cache:/app/model_cache
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -46,6 +46,18 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  frontend:
+    build:
+      context: ./voice-integrity-frontend
+      dockerfile: Dockerfile
+    container_name: voice_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      realtime-backend:
+        condition: service_healthy
 
 volumes:
   realtime_model_cache:
