@@ -13,7 +13,6 @@ echo "=========================================================="
 if ! command -v docker &> /dev/null; then
     echo "[+] Docker not found. Installing Docker..."
     curl -fsSL https://get.docker.com | sh
-    sudo systemctl enable --now docker
     if [ -n "${SUDO_USER:-}" ]; then
         sudo usermod -aG docker "$SUDO_USER"
     elif [ -n "${USER:-}" ]; then
@@ -24,7 +23,28 @@ else
     echo "[✓] Docker is already installed."
 fi
 
-# 2. Ensure Docker Compose is available
+# 2. Ensure Docker daemon is running
+echo "[+] Checking Docker daemon status..."
+if ! docker info &> /dev/null; then
+    echo "[+] Starting Docker daemon..."
+    if command -v systemctl &> /dev/null; then
+        sudo systemctl enable --now docker 2>/dev/null || true
+        sudo systemctl start docker 2>/dev/null || true
+    elif command -v service &> /dev/null; then
+        sudo service docker start 2>/dev/null || true
+    fi
+    sleep 2
+fi
+
+if ! docker info &> /dev/null; then
+    echo "[-] ERROR: Cannot connect to Docker daemon at unix:///var/run/docker.sock."
+    echo "    Please start it manually with: systemctl start docker"
+    echo "    Or check logs with: journalctl -u docker -e"
+    exit 1
+fi
+echo "[✓] Docker daemon is running."
+
+# 3. Ensure Docker Compose is available
 if ! docker compose version &> /dev/null; then
     echo "[+] Installing Docker Compose plugin..."
     sudo apt-get update && sudo apt-get install -y docker-compose-plugin
