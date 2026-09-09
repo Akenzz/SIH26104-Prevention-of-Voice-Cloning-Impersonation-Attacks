@@ -50,14 +50,12 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
             loaded[key] = SSLExpert(cache_dir=settings.model_cache_dir, device=settings.device)
             continue
 
-        if key in _BAND_GATED_LFCC:
-            # Same LFCC-LCNN class again, but trained WITH a 7 kHz parity band
-            # gate. The gate lives in the checkpoint and is applied inside
-            # LFCCLCNNExpert.score(), so nothing here (or in the pipeline) needs
-            # to know the cutoff -- and it cannot be applied twice.
-            # hybrid_maxbr -- from-scratch on the 84k-chunk / 132-generator
-            #                 merged corpus, hosted at sarosh22/Final_LFCC,
-            #                 and the current decision expert.
+        if key == "hybrid":
+            # Alias legacy 'hybrid' name to the current decision expert 'hybrid_maxbr'
+            key = "hybrid_maxbr"
+
+        if key in _BAND_GATED_LFCC or key in HUB_EXPERTS:
+            # LFCC-LCNN class: hub_key selects checkpoint from config.HUB_EXPERTS
             from .lfcc import LFCCLCNNExpert
 
             loaded[key] = LFCCLCNNExpert(
@@ -68,7 +66,7 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
             )
             continue
         raise ValueError(
-            f"Unknown expert {name!r}. Known: dummy, wavlm, ssl, "
+            f"Unknown expert {name!r}. Known: dummy, wavlm, ssl, hybrid, "
             f"{', '.join(sorted(_BAND_GATED_LFCC))}"
         )
     if not loaded:
@@ -114,14 +112,16 @@ def _assert_band_gates_applied(loaded: dict[str, Expert]) -> None:
             logger.info("Verified expert %s applies its %.0f Hz band gate", key, applied)
 
 
-def prefetch_hub_files(cache_dir: Path) -> None:
-    """Download both Hub checkpoints without constructing model classes."""
+def prefetch_hub_files(cache_dir: Path, expert_names: list[str] | None = None) -> None:
+    """Download Hub checkpoints for active experts without constructing model classes."""
     from config import HUB_EXPERTS
     from .hub import ensure_checkpoint
 
-    for spec in HUB_EXPERTS.values():
-        if spec.get("local_only"):
-            # Not on the Hub — nothing to prefetch; it ships in model_cache/.
+    keys = expert_names if expert_names is not None else list(HUB_EXPERTS)
+    for key in keys:
+        spec = HUB_EXPERTS.get(key)
+        if not spec or spec.get("local_only"):
+            # Not on the Hub or unconfigured — nothing to prefetch
             continue
         ensure_checkpoint(
             repo_id=spec["repo_id"],

@@ -143,7 +143,7 @@ async def lifespan(_app: FastAPI):
     global experts
     settings.model_cache_dir.mkdir(parents=True, exist_ok=True)
     if settings.prefetch_models:
-        prefetch_hub_files(settings.model_cache_dir)
+        prefetch_hub_files(settings.model_cache_dir, settings.experts)
     print("Starting to load backend models... (this takes ~2-3 mins wait till you see 'you can now use the Frontend!')")
     experts = load_experts(settings)
     for key in experts:

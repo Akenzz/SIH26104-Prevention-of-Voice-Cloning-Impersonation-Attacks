@@ -21,8 +21,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
-      retries: 6
-      start_period: 45s
+      retries: 15
+      start_period: 120s
 
   relay-service:
     build:

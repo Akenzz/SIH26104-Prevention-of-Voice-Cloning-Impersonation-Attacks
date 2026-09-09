@@ -134,13 +134,14 @@ class WavLMExpert:
         self._wire_model()
 
     def _wire_model(self) -> None:
-        """Import WavLMClassifier from wavlm-base-plus package and load weights."""
-        _add_wavlm_to_path()
-        import importlib
-        # Package folder is "wavlm-base-plus" — hyphens are not valid Python
-        # identifiers so we use importlib.import_module instead of a bare import.
-        pkg = importlib.import_module("wavlm-base-plus.model")
-        WavLMClassifier = pkg.WavLMClassifier
+        """Import WavLMClassifier and load weights."""
+        try:
+            from .wavlm_model import WavLMClassifier
+        except ImportError:
+            _add_wavlm_to_path()
+            import importlib
+            pkg = importlib.import_module("wavlm-base-plus.model")
+            WavLMClassifier = pkg.WavLMClassifier
 
         model = WavLMClassifier()
 

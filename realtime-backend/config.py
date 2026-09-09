@@ -120,7 +120,7 @@ EXPERT_LABELS = {
 # still comes from SINGLE_EXPERT via CALIBRATOR_PATH; these are what let the UI
 # show a meaningful probability for BOTH models side by side.
 EXPERT_CALIBRATORS = {
-    "wavlm": ARTIFACTS_DIR / "platt_v6.json",
+    "wavlm": ARTIFACTS_DIR / "platt_v5.json",
     "hybrid": ARTIFACTS_DIR / "calibrator_hybrid_newclips.json",
     "ssl": ARTIFACTS_DIR / "platt_ssl.json",
     # hybrid_br is calibrated on GATED dev audio (lfcc-detector/fit_calibrator_br.py,
