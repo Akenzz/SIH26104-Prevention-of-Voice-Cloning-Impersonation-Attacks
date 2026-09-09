@@ -1,0 +1,51 @@
+services:
+  realtime-backend:
+    build:
+      context: ./realtime-backend
+      dockerfile: Dockerfile
+    container_name: voice_realtime_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEVICE=cpu
+      - PREFETCH_MODELS=1
+      # Optional: set GROQ_API_KEY if you want LLM narration
+      # - GROQ_API_KEY=${GROQ_API_KEY:-}
+    volumes:
+      # Persistent cache for HuggingFace model weights so restarts are instant
+      - realtime_model_cache:/app/model_cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 45s
+
+  relay-service:
+    build:
+      context: ./relay-service
+      dockerfile: Dockerfile
+    container_name: voice_relay_service
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - RELAY_HOST=0.0.0.0
+      - RELAY_PORT=8001
+      - BACKEND_WS_URL=ws://realtime-backend:8000/ws
+      - CONVERTER_TYPE=mock
+    depends_on:
+      realtime-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  realtime_model_cache:

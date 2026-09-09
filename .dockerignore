@@ -1,0 +1,14 @@
+.git
+.gitignore
+.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache
+node_modules
+voice_integrity_flutter/build
+voice_integrity_flutter/.dart_tool
+.idea
+.vscode
+*.log

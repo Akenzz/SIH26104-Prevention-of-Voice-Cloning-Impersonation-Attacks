@@ -432,3 +432,15 @@ npm run dev
 | **Person H** | Evaluation | Sliced evaluation harness, per-condition EER reporting |
 | **Person K** | AASIST / SSL | AASIST model code in `ssl-detector/model.py` |
 | **Frontend team** | Dashboard | `voice-integrity-frontend/` (React + Vite), `origin/frontend` branch |
+
+---
+
+## 18. Docker & VPS Deployment Setup
+
+Added complete containerization support for deploying both backends on a cloud VPS:
+- **`realtime-backend/Dockerfile`**: Python 3.11 slim, optimized CPU-only PyTorch wheels (reducing image size from 4GB+ to ~800MB), audio system libraries (`libsndfile1`, `ffmpeg`), and healthcheck.
+- **`relay-service/Dockerfile`**: Python 3.11 slim, FastAPI WebSockets server, healthcheck.
+- **`docker-compose.yml`**: Bridges both services on internal network with healthcheck dependency; maps ports 8000 and 8001; persistent Docker volume for HuggingFace model cache (`realtime_model_cache`).
+- **`.dockerignore`**: Excludes virtual environments, flutter build artifacts, and caches from Docker contexts.
+- **`VPS_DEPLOYMENT_GUIDE.md`**: Complete step-by-step instructions for 1-command deployment (`docker compose up -d --build`), public teammate URLs, and SSL options (Cloudflare Tunnel or Caddy).
+
