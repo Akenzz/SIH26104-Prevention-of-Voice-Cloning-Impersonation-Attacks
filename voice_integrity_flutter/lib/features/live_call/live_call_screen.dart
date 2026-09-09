@@ -546,7 +546,7 @@ class _ReceiverModeView extends StatelessWidget {
         const SizedBox(height: 18),
 
         // Speaker Playback Controls Card
-        _SpeakerPlaybackCard(service: service, stats: stats),
+        SpeakerPlaybackCard(service: service, stats: stats),
         const SizedBox(height: 18),
 
         // Multi-Expert Evidence Breakdown
@@ -732,22 +732,100 @@ class _LiveProbabilityMeterCard extends StatelessWidget {
 // SPEAKER PLAYBACK CONTROLS CARD
 // -----------------------------------------------------------------------------
 
-class _SpeakerPlaybackCard extends StatefulWidget {
-  const _SpeakerPlaybackCard({required this.service, required this.stats});
+class SpeakerPlaybackCard extends StatefulWidget {
+  const SpeakerPlaybackCard({super.key, required this.service, required this.stats});
 
   final LiveCallService service;
   final CallStats stats;
 
   @override
-  State<_SpeakerPlaybackCard> createState() => _SpeakerPlaybackCardState();
+  State<SpeakerPlaybackCard> createState() => _SpeakerPlaybackCardState();
 }
 
-class _SpeakerPlaybackCardState extends State<_SpeakerPlaybackCard> {
+class _SpeakerPlaybackCardState extends State<SpeakerPlaybackCard> {
+  StreamSubscription<double>? _levelSub;
+  StreamSubscription<bool>? _isPlayingSub;
+  double _localLevel = 0.0;
+  bool _isPlaying = false;
+  bool _isTesting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribe();
+  }
+
+  @override
+  void didUpdateWidget(covariant SpeakerPlaybackCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.service != widget.service) {
+      _unsubscribe();
+      _subscribe();
+    }
+  }
+
+  void _subscribe() {
+    _levelSub = widget.service.playbackService.playbackLevelStream.listen((
+      level,
+    ) {
+      if (mounted) {
+        setState(() {
+          _localLevel = level;
+        });
+      }
+    });
+    _isPlayingSub = widget.service.playbackService.isPlayingStream.listen((
+      playing,
+    ) {
+      if (mounted) {
+        setState(() {
+          _isPlaying = playing;
+        });
+      }
+    });
+  }
+
+  void _unsubscribe() {
+    _levelSub?.cancel();
+    _levelSub = null;
+    _isPlayingSub?.cancel();
+    _isPlayingSub = null;
+  }
+
+  @override
+  void dispose() {
+    _unsubscribe();
+    super.dispose();
+  }
+
+  Future<void> _handleTestSound() async {
+    if (_isTesting) return;
+    setState(() => _isTesting = true);
+    try {
+      await widget.service.playbackService.playTestSound();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(
+            content: Text('Error playing test sound: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isTesting = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final playback = widget.service.playbackService;
     final isMuted = playback.isMuted;
-    final isPlaying = playback.isPlaying;
+    final activePlaying = _isPlaying || playback.isPlaying || _isTesting;
+    final displayLevel =
+        _localLevel > 0.0 ? _localLevel : widget.stats.audioLevel;
 
     return Card(
       child: Padding(
@@ -761,21 +839,21 @@ class _SpeakerPlaybackCardState extends State<_SpeakerPlaybackCard> {
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: isPlaying ? AppColors.mossSoft : AppColors.paper,
+                    color: activePlaying ? AppColors.mossSoft : AppColors.paper,
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: isPlaying ? AppColors.moss : AppColors.line,
+                      color: activePlaying ? AppColors.moss : AppColors.line,
                     ),
                   ),
                   child: Icon(
                     isMuted
                         ? Icons.volume_off_rounded
-                        : (isPlaying
+                        : (activePlaying
                               ? Icons.volume_up_rounded
                               : Icons.volume_mute_rounded),
                     color: isMuted
                         ? AppColors.mutedInk
-                        : (isPlaying ? AppColors.moss : AppColors.ink),
+                        : (activePlaying ? AppColors.moss : AppColors.ink),
                     size: 20,
                   ),
                 ),
@@ -793,11 +871,13 @@ class _SpeakerPlaybackCardState extends State<_SpeakerPlaybackCard> {
                         ),
                       ),
                       Text(
-                        isPlaying
-                            ? 'Streaming incoming voice through speaker (~300ms jitter queue)'
-                            : (widget.service.isConnected
-                                  ? 'Waiting for voice audio packets...'
-                                  : 'Connect receiver to listen'),
+                        _isTesting
+                            ? 'Playing harmonic chime test sound...'
+                            : (activePlaying
+                                  ? 'Streaming incoming voice through speaker (~300ms jitter queue)'
+                                  : (widget.service.isConnected
+                                        ? 'Waiting for voice audio packets...'
+                                        : 'Connect receiver to listen')),
                         style: const TextStyle(
                           fontSize: 12,
                           color: AppColors.mutedInk,
@@ -827,9 +907,47 @@ class _SpeakerPlaybackCardState extends State<_SpeakerPlaybackCard> {
             _AudioLevelMeterCard(
               title: 'Speaker Acoustic Output',
               subtitle: '16kHz Audio Stream Playback',
-              level: widget.stats.audioLevel,
-              isActive: isPlaying || widget.stats.audioLevel > 0.01,
+              level: displayLevel,
+              isActive: activePlaying || displayLevel > 0.01,
               accentColor: AppColors.moss,
+            ),
+            const SizedBox(height: 12),
+
+            // Test Speaker Button
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonalIcon(
+                onPressed: _isTesting ? null : _handleTestSound,
+                icon: _isTesting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.moss,
+                        ),
+                      )
+                    : const Icon(Icons.music_note_rounded, size: 18),
+                label: Text(
+                  _isTesting ? 'Testing Sound...' : 'Test Speaker',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.mossSoft,
+                  foregroundColor: AppColors.moss,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 11,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    side: const BorderSide(color: AppColors.moss, width: 1.2),
+                  ),
+                ),
+              ),
             ),
           ],
         ),

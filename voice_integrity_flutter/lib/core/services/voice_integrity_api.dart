@@ -1,19 +1,40 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/voice_models.dart';
 
 class VoiceIntegrityApi {
-  VoiceIntegrityApi(String baseUrl) : _baseUri = Uri.parse(_normalise(baseUrl));
+  static const String defaultEndpoint = 'https://codequantum.in/sih';
+
+  VoiceIntegrityApi([String baseUrl = defaultEndpoint])
+      : _baseUri = Uri.parse(
+          _normalise(baseUrl.trim().isEmpty ? defaultEndpoint : baseUrl),
+        );
 
   final Uri _baseUri;
+
+  Uri get baseUri => _baseUri;
 
   static String _normalise(String raw) =>
       raw.trim().replaceFirst(RegExp(r'/+$'), '');
 
-  Uri _uri(String path) => _baseUri.replace(path: '${_baseUri.path}$path');
+  @visibleForTesting
+  static String normalise(String raw) => _normalise(raw);
+
+  Uri _uri(String path) {
+    final cleanPath = path.startsWith('/') ? path : '/$path';
+    final basePath = _baseUri.path.replaceFirst(RegExp(r'/+$'), '');
+    final combinedPath = basePath.isEmpty ? cleanPath : '$basePath$cleanPath';
+    return _baseUri.replace(path: combinedPath);
+  }
+
+  @visibleForTesting
+  Uri uri(String path) => _uri(path);
+
+  @visibleForTesting
+  Uri buildUri(String path) => _uri(path);
 
   Future<BackendHealth> fetchHealth() async {
     final response = await http

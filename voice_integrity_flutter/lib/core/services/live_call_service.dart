@@ -107,6 +107,12 @@ class LiveCallService {
     _resetState();
   }
 
+  /// Dispatches a test sound chime through the audio playback pipeline
+  /// so users can verify speaker playback and VU meter responsiveness.
+  Future<void> playTestSound({
+    Duration chunkDelay = const Duration(milliseconds: 100),
+  }) => _playbackService.playTestSound(chunkDelay: chunkDelay);
+
   String _buildWebSocketUrl() {
     final endpoint = _mode == CallMode.caller ? 'ws/caller' : 'ws/receiver';
     var input = _serverHost.trim();

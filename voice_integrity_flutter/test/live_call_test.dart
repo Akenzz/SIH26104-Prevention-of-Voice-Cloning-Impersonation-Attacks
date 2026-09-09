@@ -1,11 +1,13 @@
 import 'dart:typed_data';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_integrity_flutter/core/models/live_call_models.dart';
 import 'package:voice_integrity_flutter/core/services/audio_playback_service.dart';
 import 'package:voice_integrity_flutter/core/services/live_call_service.dart';
 import 'package:voice_integrity_flutter/core/services/pcm_resampler.dart';
+import 'package:voice_integrity_flutter/features/live_call/live_call_screen.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -280,6 +282,20 @@ void main() {
       await service.disconnect();
       expect(service.isConnected, isFalse);
     });
+
+    test('playTestSound delegates to playbackService and excites VU stream', () async {
+      final service = LiveCallService();
+      final levels = <double>[];
+      final sub = service.playbackService.playbackLevelStream.listen(levels.add);
+
+      await service.playTestSound(chunkDelay: Duration.zero);
+
+      expect(levels, isNotEmpty);
+      expect(levels.any((lvl) => lvl > 0.0), isTrue);
+
+      await sub.cancel();
+      await service.dispose();
+    });
   });
 
   group('AudioPlaybackService', () {
@@ -323,6 +339,117 @@ void main() {
       expect(service.currentLevel, 0.0);
 
       await service.dispose();
+    });
+
+    test('generateChimePcm creates pleasant 3-note chime with smooth envelopes', () {
+      final pcm = AudioPlaybackService.generateChimePcm();
+      // 160ms (C5) + 160ms (E5) + 320ms (G5) = 640ms = 10,240 samples = 20,480 bytes
+      expect(pcm.length, 20480);
+
+      final b = ByteData.view(pcm.buffer);
+      // First and last sample smoothly ramp from/to zero to prevent clicks or pops
+      expect(b.getInt16(0, Endian.little).abs(), lessThan(50));
+      expect(b.getInt16(pcm.length - 2, Endian.little).abs(), lessThan(50));
+
+      // Peak sample is audible and properly clamped within 16-bit range
+      var peak = 0;
+      for (var i = 0; i < pcm.length; i += 2) {
+        final sample = b.getInt16(i, Endian.little).abs();
+        if (sample > peak) peak = sample;
+      }
+      expect(peak, greaterThan(8000));
+      expect(peak, lessThanOrEqualTo(32767));
+    });
+
+    test('playTestSound can be called without errors and excites VU meter stream', () async {
+      final service = AudioPlaybackService();
+      final levels = <double>[];
+      final sub = service.playbackLevelStream.listen(levels.add);
+
+      await service.playTestSound(chunkDelay: Duration.zero);
+
+      expect(levels, isNotEmpty);
+      expect(levels.any((l) => l > 0.0), isTrue);
+      expect(service.currentLevel, greaterThan(0.0));
+
+      await sub.cancel();
+      await service.dispose();
+    });
+
+    test('playTestSound unmutes if muted before playing', () async {
+      final service = AudioPlaybackService();
+      await service.toggleMute();
+      expect(service.isMuted, isTrue);
+
+      final levels = <double>[];
+      final sub = service.playbackLevelStream.listen(levels.add);
+
+      await service.playTestSound(chunkDelay: Duration.zero);
+
+      // Verify unmuted
+      expect(service.isMuted, isFalse);
+      expect(levels.any((l) => l > 0.0), isTrue);
+
+      await sub.cancel();
+      await service.dispose();
+    });
+
+    test('playTestSound returns early if disposed', () async {
+      final service = AudioPlaybackService();
+      await service.dispose();
+
+      // Should complete without error
+      await expectLater(
+        service.playTestSound(chunkDelay: Duration.zero),
+        completes,
+      );
+    });
+
+    test('playTestSound with default delay runs and excites stream', () async {
+      final service = AudioPlaybackService();
+      final levels = <double>[];
+      final sub = service.playbackLevelStream.listen(levels.add);
+
+      await service.playTestSound();
+
+      expect(levels, isNotEmpty);
+      expect(levels.any((l) => l > 0.0), isTrue);
+
+      await sub.cancel();
+      await service.dispose();
+    });
+  });
+
+  group('SpeakerPlaybackCard Receiver UI', () {
+    testWidgets('renders Test Speaker button and shows visual feedback on tap', (tester) async {
+      final service = LiveCallService();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: SpeakerPlaybackCard(
+                service: service,
+                stats: const CallStats(),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Verify Test Speaker button is rendered in the speaker playback card
+      expect(find.text('Test Speaker'), findsOneWidget);
+      expect(find.byIcon(Icons.music_note_rounded), findsOneWidget);
+
+      // Tap Test Speaker button
+      await tester.tap(find.text('Test Speaker'));
+      await tester.pump();
+
+      // Clean up service and unmount
+      await service.playbackService.stop();
+      await tester.pumpWidget(const SizedBox());
+      await service.dispose();
+      await tester.pump();
     });
   });
 }

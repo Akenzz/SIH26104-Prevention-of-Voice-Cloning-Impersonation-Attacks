@@ -22,7 +22,7 @@ class VoiceIntegrityShell extends StatefulWidget {
 
 class _VoiceIntegrityShellState extends State<VoiceIntegrityShell> {
   final _endpointController = TextEditingController(
-    text: 'http://127.0.0.1:8000',
+    text: VoiceIntegrityApi.defaultEndpoint,
   );
   final _liveCallService = LiveCallService();
   _Destination _destination = _Destination.overview;
@@ -1754,7 +1754,7 @@ class _ModelReviewPage extends StatelessWidget {
           'This app deliberately distinguishes independent model evidence from the configured decision path. A result is useful only when its model, preprocessing, and calibrator match.',
         ),
         const SizedBox(height: 25),
-        _EndpointCard(
+        _BackendConnectionCard(
           controller: endpointController,
           health: health,
           checking: checkingHealth,
@@ -1788,8 +1788,8 @@ class _ModelReviewPage extends StatelessWidget {
   );
 }
 
-class _EndpointCard extends StatelessWidget {
-  const _EndpointCard({
+class _BackendConnectionCard extends StatelessWidget {
+  const _BackendConnectionCard({
     required this.controller,
     required this.health,
     required this.checking,
@@ -1816,9 +1816,45 @@ class _EndpointCard extends StatelessWidget {
             keyboardType: TextInputType.url,
             decoration: const InputDecoration(
               labelText: 'Backend URL',
-              hintText: 'http://127.0.0.1:8000',
+              hintText: 'https://codequantum.in/sih',
               prefixIcon: Icon(Icons.link_rounded),
             ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                '1-Tap Presets:',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.ink.withValues(alpha: 0.65),
+                ),
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.cloud_done_outlined, size: 16),
+                label: const Text('Cloud VPS (Default)'),
+                onPressed: checking
+                    ? null
+                    : () {
+                        controller.text = VoiceIntegrityApi.defaultEndpoint;
+                        onCheck();
+                      },
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.laptop_chromebook_rounded, size: 16),
+                label: const Text('Localhost:8000'),
+                onPressed: checking
+                    ? null
+                    : () {
+                        controller.text = 'http://127.0.0.1:8000';
+                        onCheck();
+                      },
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           Wrap(
@@ -1867,7 +1903,7 @@ class _EndpointCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      _friendlyError(healthError!),
+                      _errorExplanation(healthError!),
                       style: const TextStyle(
                         color: AppColors.vermilion,
                         fontSize: 12,
@@ -2298,20 +2334,22 @@ IconData _riskIcon(RiskState risk) => switch (risk) {
   RiskState.unavailable => Icons.do_not_disturb_alt_outlined,
 };
 
-String _friendlyError(String raw) {
+String _errorExplanation(String raw) {
   if (raw.contains('Connection refused') ||
       raw.contains('SocketException') ||
       raw.contains('Connection closed') ||
       raw.contains('ClientException') ||
       raw.contains('Failed host lookup') ||
       raw.contains('Broken pipe')) {
-    return 'Backend offline or unreachable at this URL.\n• For full model inspection & file analysis: start realtime-backend (python server.py on port 8000).\n• For the Live Fraud Call Demo: the Relay Service is active on port 8001.';
+    return 'Backend offline or unreachable at this URL.\n• Cloud VPS (Default): Check your internet connection or verify the hosted service (https://codequantum.in/sih).\n• Localhost: Ensure realtime-backend is running locally (python server.py on port 8000).\n• For the Live Fraud Call Demo: the Relay Service is active on port 8001.';
   }
   if (raw.contains('Timed out') || raw.contains('TimeoutException')) {
-    return 'The backend did not respond in time (8s timeout). Check its model loading status in the terminal.';
+    return 'The backend did not respond in time (8s timeout). Check network connectivity to the cloud VPS or model loading status in the terminal.';
   }
   return raw.replaceFirst('VoiceIntegrityApiException: ', '');
 }
+
+String _friendlyError(String raw) => _errorExplanation(raw);
 
 extension<T> on List<T> {
   T? get singleOrNull => length == 1 ? single : null;

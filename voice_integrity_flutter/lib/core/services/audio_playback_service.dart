@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
@@ -45,13 +46,17 @@ class AudioPlaybackService {
   double _currentLevel = 0.0;
   Timer? _drainTimer;
   Timer? _decayTimer;
+  Timer? _testDelayTimer;
+  Completer<void>? _testDelayCompleter;
   bool _isDisposed = false;
+  bool _isTestingSound = false;
 
   Stream<double> get playbackLevelStream => _playbackLevelController.stream;
   Stream<bool> get isPlayingStream => _isPlayingController.stream;
 
   bool get isPlaying => _isPlaying;
   bool get isMuted => _isMuted;
+  bool get isTestingSound => _isTestingSound;
   double get volume => _volume;
   double get currentLevel => _currentLevel;
 
@@ -227,6 +232,13 @@ class AudioPlaybackService {
 
   /// Clear the buffer and stop current playback.
   Future<void> stop() async {
+    _testDelayTimer?.cancel();
+    _testDelayTimer = null;
+    if (_testDelayCompleter?.isCompleted == false) {
+      _testDelayCompleter?.complete();
+    }
+    _testDelayCompleter = null;
+    _isTestingSound = false;
     _drainTimer?.cancel();
     _drainTimer = null;
     _decayTimer?.cancel();
@@ -241,6 +253,131 @@ class AudioPlaybackService {
     _currentLevel = 0.0;
     _playbackLevelController.add(0.0);
     _isPlayingController.add(false);
+  }
+
+  /// Generates a pleasant, clear 3-note harmonic chime (C5: 523.25Hz for 160ms,
+  /// E5: 659.25Hz for 160ms, G5: 783.99Hz for 320ms) at 16000Hz 16-bit mono signed
+  /// PCM with a smooth attack/decay envelope on each note to eliminate any clicks or pops.
+  static Uint8List generateChimePcm({int sampleRate = 16000}) {
+    // 3 notes: C5 (523.25Hz, 160ms), E5 (659.25Hz, 160ms), G5 (783.99Hz, 320ms)
+    final notes = [
+      (frequency: 523.25, durationMs: 160, isFinal: false),
+      (frequency: 659.25, durationMs: 160, isFinal: false),
+      (frequency: 783.99, durationMs: 320, isFinal: true),
+    ];
+
+    final totalSamples = notes.fold<int>(
+      0,
+      (sum, note) => sum + (note.durationMs * sampleRate ~/ 1000),
+    );
+
+    final pcmBytes = Uint8List(totalSamples * 2);
+    final byteData = ByteData.view(pcmBytes.buffer);
+
+    var sampleOffset = 0;
+    for (final note in notes) {
+      final noteSamples = note.durationMs * sampleRate ~/ 1000;
+      final freq = note.frequency;
+      final isFinal = note.isFinal;
+
+      // Attack: 15ms (smooth cosine rise from 0 to 1)
+      final attackSamples =
+          (0.015 * sampleRate).round().clamp(1, noteSamples ~/ 2);
+      // Decay: 20ms for interim notes, 120ms gentle fade for final chime note
+      final decaySamples = isFinal
+          ? (0.120 * sampleRate).round().clamp(1, noteSamples ~/ 2)
+          : (0.020 * sampleRate).round().clamp(1, noteSamples ~/ 2);
+
+      for (var i = 0; i < noteSamples; i++) {
+        final t = i / sampleRate;
+
+        // Rich harmonic chime timbre: fundamental + 2nd and 3rd harmonics
+        final harmonicWave =
+            (math.sin(2 * math.pi * freq * t) +
+                0.25 * math.sin(4 * math.pi * freq * t) +
+                0.08 * math.sin(6 * math.pi * freq * t)) /
+            1.33;
+
+        // Smooth envelope to eliminate any clicks or pops
+        double envelope;
+        if (i < attackSamples) {
+          envelope = 0.5 * (1.0 - math.cos(math.pi * i / attackSamples));
+        } else if (i >= noteSamples - decaySamples) {
+          final decayProgress =
+              (i - (noteSamples - decaySamples)) / decaySamples;
+          final base = isFinal ? 0.7 : 1.0;
+          envelope = base * 0.5 * (1.0 + math.cos(math.pi * decayProgress));
+        } else if (isFinal) {
+          final sustainProgress =
+              (i - attackSamples) /
+              (noteSamples - decaySamples - attackSamples);
+          envelope = 1.0 - 0.3 * sustainProgress;
+        } else {
+          envelope = 1.0;
+        }
+
+        const maxAmplitude = 18000.0;
+        final sampleVal = (harmonicWave * envelope * maxAmplitude)
+            .round()
+            .clamp(-32768, 32767);
+
+        byteData.setInt16((sampleOffset + i) * 2, sampleVal, Endian.little);
+      }
+      sampleOffset += noteSamples;
+    }
+
+    return pcmBytes;
+  }
+
+  /// Plays a pleasant, clear 3-note harmonic chime through the exact playback pipeline
+  /// so users can verify speaker output and VU meter functionality.
+  ///
+  /// - If the player is disposed, returns immediately.
+  /// - If [_isMuted], unmutes first so the sound is audible.
+  /// - Ingests the PCM into [ingestPcmChunk] in 100ms (3200 bytes) slices,
+  ///   flowing through the exact jitter buffer, WAV encapsulation, AudioPlayer speaker
+  ///   playback, and VU meter level stream that live call audio uses.
+  /// - Returns when the sound has been dispatched.
+  Future<void> playTestSound({
+    Duration chunkDelay = const Duration(milliseconds: 100),
+  }) async {
+    if (_isDisposed || _isTestingSound) return;
+    _isTestingSound = true;
+
+    try {
+      if (_isMuted) {
+        await toggleMute();
+      }
+      if (_isDisposed) return;
+
+      final pcm = generateChimePcm();
+      const chunkSize = 3200; // 100ms at 16kHz 16-bit mono
+
+      for (var offset = 0; offset < pcm.length; offset += chunkSize) {
+        if (_isDisposed) break;
+
+        final end = (offset + chunkSize < pcm.length)
+            ? offset + chunkSize
+            : pcm.length;
+        final slice = Uint8List.sublistView(pcm, offset, end);
+        ingestPcmChunk(slice);
+
+        if (offset + chunkSize < pcm.length && chunkDelay > Duration.zero) {
+          final completer = Completer<void>();
+          _testDelayCompleter = completer;
+          _testDelayTimer = Timer(chunkDelay, () {
+            _testDelayTimer = null;
+            if (!completer.isCompleted) completer.complete();
+          });
+          await completer.future;
+          _testDelayCompleter = null;
+        }
+      }
+      // Brief yield to ensure all queued stream events are delivered
+      await Future<void>.microtask(() {});
+    } finally {
+      _isTestingSound = false;
+    }
   }
 
   /// Dispose player resources.
