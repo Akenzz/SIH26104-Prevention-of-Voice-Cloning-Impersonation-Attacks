@@ -189,7 +189,7 @@ def health() -> JSONResponse:
             "decision_expert": settings.single_expert,
             "decision_label": {
                 "lr_fusion": "LR Fusion (WavLM + LFCC + SSL)",
-                "heuristic_avg": "LFCC + SSL Average",
+                "heuristic_avg": "50% WavLM + 50% LFCC-LCNN Hybrid",
                 "heuristic": "LFCC + SSL Heuristic",
                 "single": EXPERT_LABELS.get(settings.single_expert, settings.single_expert),
             }.get(settings.fusion_mode, settings.fusion_mode),
@@ -308,13 +308,16 @@ async def predict_file(file: UploadFile = File(...)):
                 
             # Probability-space fusion to match optimize_weights.py exactly
             p_w = smoothed_expert_probs.get("wavlm", 0.0)
-            p_l = smoothed_expert_probs.get("hybrid_maxbr", 0.0)
+            p_l = smoothed_expert_probs.get(
+                "hybrid_maxbr", smoothed_expert_probs.get("hybrid", 0.0)
+            )
+            has_lfcc = "hybrid_maxbr" in smoothed_expert_probs or "hybrid" in smoothed_expert_probs
             p_s = smoothed_expert_probs.get("ssl", 0.0)
             W_WAVLM, W_LFCC, W_SSL = 0.50, 0.50, 0.00
             
             experts_present = (
                 ("wavlm" in smoothed_expert_probs) * W_WAVLM +
-                ("hybrid_maxbr" in smoothed_expert_probs) * W_LFCC +
+                has_lfcc * W_LFCC +
                 ("ssl"   in smoothed_expert_probs) * W_SSL
             )
             if experts_present > 0:
@@ -323,7 +326,7 @@ async def predict_file(file: UploadFile = File(...)):
                 probability = float((p_w + p_l + p_s) / 2.0)
                 
             # Agreement override
-            if p_l > 0.85 and (p_w > 0.60 or p_s > 0.60):
+            if p_l > 0.85 and (p_w > 0.60 or ("ssl" in smoothed_expert_probs and p_s > 0.60)):
                 probability = max(probability, 0.80)
                 
             from policy import decide

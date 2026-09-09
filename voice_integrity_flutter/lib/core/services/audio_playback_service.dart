@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'pcm_resampler.dart';
 
 /// Service managing real-time PCM audio playback through the device speaker
-/// with a ~120ms jitter buffer to ensure smooth acoustic reproduction.
+/// with a ~300ms jitter buffer to ensure smooth acoustic reproduction.
 class AudioPlaybackService {
   AudioPlaybackService({AudioPlayer? player}) : _playerInstance = player {
     if (player != null) {
@@ -28,9 +28,15 @@ class AudioPlaybackService {
   final _playbackLevelController = StreamController<double>.broadcast();
   final _isPlayingController = StreamController<bool>.broadcast();
 
-  // 120ms jitter buffer at 16kHz 16-bit mono:
-  // 16000 samples/sec * 2 bytes/sample * 0.120 sec = 3840 bytes.
-  static const int _jitterBufferTargetBytes = 3840;
+  // ~300ms jitter buffer at 16kHz 16-bit mono:
+  // 16000 samples/sec * 2 bytes/sample * 0.300 sec = 9600 bytes.
+  static const int _jitterBufferTargetBytes = 9600;
+
+  // Immediate playback threshold (~100ms) when onPlayerComplete fires
+  static const int _minPlayChunkBytes = 3200;
+
+  // Smoothing factor for VU meter exponential moving average
+  static const double _emaAlpha = 0.3;
 
   final List<int> _jitterBuffer = [];
   bool _isPlaying = false;
@@ -38,6 +44,7 @@ class AudioPlaybackService {
   double _volume = 1.0;
   double _currentLevel = 0.0;
   Timer? _drainTimer;
+  Timer? _decayTimer;
   bool _isDisposed = false;
 
   Stream<double> get playbackLevelStream => _playbackLevelController.stream;
@@ -49,8 +56,8 @@ class AudioPlaybackService {
   double get currentLevel => _currentLevel;
 
   void _setupPlayer(AudioPlayer player) {
-    // Critical Red Team Mitigation:
-    // Route to loud speaker instead of quiet phone earpiece!
+    // Critical Routing Configuration:
+    // Route to loud speaker (music/media stream) instead of quiet phone call earpiece!
     try {
       player
           .setAudioContext(
@@ -66,9 +73,9 @@ class AudioPlaybackService {
               android: const AudioContextAndroid(
                 isSpeakerphoneOn: true,
                 stayAwake: true,
-                contentType: AndroidContentType.speech,
-                usageType: AndroidUsageType.voiceCommunication,
-                audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+                contentType: AndroidContentType.music,
+                usageType: AndroidUsageType.media,
+                audioFocus: AndroidAudioFocus.gain,
               ),
             ),
           )
@@ -92,20 +99,32 @@ class AudioPlaybackService {
   void ingestPcmChunk(Uint8List pcmChunk) {
     if (_isDisposed || _isMuted || pcmChunk.isEmpty) return;
 
-    // Calculate incoming playback level for visual VU meter
-    final level = PcmResampler.calculateRmsLevel(pcmChunk);
-    _currentLevel = level;
-    _playbackLevelController.add(level);
+    // Cancel decay timer since fresh audio packets have arrived
+    _decayTimer?.cancel();
+    _decayTimer = null;
 
+    // Calculate incoming playback level for visual VU meter with EMA smoothing
+    final rawLevel = PcmResampler.calculateRmsLevel(pcmChunk);
+    _currentLevel = (_emaAlpha * rawLevel) + ((1.0 - _emaAlpha) * _currentLevel);
+    if (_currentLevel < 0.005) _currentLevel = 0.0;
+    _playbackLevelController.add(_currentLevel);
+
+    // Accumulate incoming PCM chunks into jitter buffer
     _jitterBuffer.addAll(pcmChunk);
 
-    // If we've reached the ~120ms jitter queue target and not currently playing, drain
+    // Safety cap jitter buffer (e.g. 2 seconds = 64,000 bytes) to prevent unbounded memory
+    if (_jitterBuffer.length > 64000) {
+      _jitterBuffer.removeRange(0, _jitterBuffer.length - 64000);
+    }
+
+    // If we've reached the ~300ms jitter queue target and not currently playing, drain
     if (_jitterBuffer.length >= _jitterBufferTargetBytes && !_isPlaying) {
       _drainTimer?.cancel();
+      _drainTimer = null;
       _playQueuedBuffer();
     } else if (!_isPlaying) {
-      // Set a short deadline timer (140ms) to ensure small chunks aren't stranded
-      _drainTimer ??= Timer(const Duration(milliseconds: 140), () {
+      // Set a deadline timer (320ms) to ensure small chunks aren't stranded
+      _drainTimer ??= Timer(const Duration(milliseconds: 320), () {
         _drainTimer = null;
         if (!_isPlaying && _jitterBuffer.isNotEmpty) {
           _playQueuedBuffer();
@@ -115,13 +134,12 @@ class AudioPlaybackService {
   }
 
   Future<void> _playQueuedBuffer() async {
-    if (_isDisposed || _isMuted || _jitterBuffer.isEmpty) return;
+    if (_isDisposed || _isMuted || _isPlaying || _jitterBuffer.isEmpty) return;
+    if (_jitterBuffer.length < 320) return; // Too short to play
 
     // Take current buffer
     final pcmBytes = Uint8List.fromList(_jitterBuffer);
     _jitterBuffer.clear();
-
-    if (pcmBytes.length < 320) return; // Too short to play
 
     final wavData = PcmResampler.createWavContainer(
       pcmData: pcmBytes,
@@ -139,22 +157,57 @@ class AudioPlaybackService {
       debugPrint('[AudioPlaybackService] Playback chunk error: $e');
       _isPlaying = false;
       _isPlayingController.add(false);
+      _checkAndPlayNextChunk();
     }
   }
 
   void _checkAndPlayNextChunk() {
-    if (_jitterBuffer.isNotEmpty && !_isMuted && !_isDisposed) {
+    if (_isDisposed || _isMuted) return;
+
+    if (_jitterBuffer.length >= _minPlayChunkBytes) {
+      // Immediately play back accumulated audio without waiting for a new trigger
+      _drainTimer?.cancel();
+      _drainTimer = null;
       _playQueuedBuffer();
+    } else if (_jitterBuffer.isNotEmpty) {
+      // Small buffer left (< 100ms), wait briefly for more chunks or drain
+      _drainTimer?.cancel();
+      _drainTimer = Timer(const Duration(milliseconds: 100), () {
+        _drainTimer = null;
+        if (!_isPlaying && _jitterBuffer.isNotEmpty) {
+          _playQueuedBuffer();
+        } else if (!_isPlaying && _jitterBuffer.isEmpty) {
+          _startDecay();
+        }
+      });
+      _startDecay();
     } else {
-      _currentLevel = 0.0;
-      _playbackLevelController.add(0.0);
+      // Temporarily empty buffer: decay RMS level smoothly instead of abrupt 0.0
+      _startDecay();
     }
+  }
+
+  void _startDecay() {
+    _decayTimer?.cancel();
+    _decayTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+      _currentLevel *= 0.75;
+      if (_currentLevel < 0.01) {
+        _currentLevel = 0.0;
+        timer.cancel();
+        _decayTimer = null;
+      }
+      _playbackLevelController.add(_currentLevel);
+    });
   }
 
   /// Toggle speaker mute.
   Future<void> toggleMute() async {
     _isMuted = !_isMuted;
     if (_isMuted) {
+      _drainTimer?.cancel();
+      _drainTimer = null;
+      _decayTimer?.cancel();
+      _decayTimer = null;
       _jitterBuffer.clear();
       await _player.stop();
       _isPlaying = false;
@@ -176,6 +229,8 @@ class AudioPlaybackService {
   Future<void> stop() async {
     _drainTimer?.cancel();
     _drainTimer = null;
+    _decayTimer?.cancel();
+    _decayTimer = null;
     _jitterBuffer.clear();
     if (_playerInstance != null) {
       try {

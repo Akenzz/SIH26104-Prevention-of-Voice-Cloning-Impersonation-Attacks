@@ -199,3 +199,99 @@ def test_build_message_reports_each_expert_with_its_own_probability():
     # the original contract fields must stay intact
     assert msg["raw_per_expert_scores"] == {"wavlm": 3.0, "hybrid": -7.0}
     assert msg["model_version"]["hybrid"] == "hybrid_clean"
+
+
+def test_heuristic_avg_50_50_fusion_and_hybrid_mirroring():
+    from pipeline import process_single_window
+    from config import Settings
+    import numpy as np
+
+    class MockExpert:
+        def __init__(self, logit: float, version: str):
+            self.logit = logit
+            self.model_version = version
+
+        def score(self, window: np.ndarray):
+            return {"logit": self.logit, "embedding": None, "model_version": self.model_version}
+
+    settings = Settings(experts=["wavlm", "hybrid_maxbr"], fusion_mode="heuristic_avg")
+    fusion = load_fusion(ARTIFACTS_DIR / "fusion.json")
+    cal = Calibrator("identity", "identity_sigmoid", 1.0, 0.0)
+    policy = load_policy(ARTIFACTS_DIR / "policy.json")
+
+    t = np.linspace(0, 4, 64000, endpoint=False)
+    window = (0.2 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+    experts = {
+        "wavlm": MockExpert(2.0, "wavlm-v5"),
+        "hybrid_maxbr": MockExpert(4.0, "hybrid_maxbr-v1"),
+    }
+
+    result = process_single_window(
+        window=window,
+        settings=settings,
+        experts=experts,
+        fusion=fusion,
+        calibrator=cal,
+        policy=policy,
+        windows_scored=2,
+    )
+
+    # Both hybrid_maxbr and hybrid should be present in expert_probabilities
+    assert "hybrid_maxbr" in result.expert_probabilities
+    assert "hybrid" in result.expert_probabilities
+    assert result.expert_probabilities["hybrid"] == result.expert_probabilities["hybrid_maxbr"]
+
+    # Both should be present in scores
+    assert "hybrid_maxbr" in result.scores
+    assert "hybrid" in result.scores
+
+    # 50/50 fusion: fused = (2.0 * 0.5 + 4.0 * 0.5) / 1.0 = 3.0
+    assert result.fused_logit == pytest.approx(3.0)
+
+
+def test_heuristic_avg_strong_agreement_override():
+    from pipeline import process_single_window
+    from config import Settings
+    import numpy as np
+
+    class MockExpert:
+        def __init__(self, logit: float, version: str):
+            self.logit = logit
+            self.model_version = version
+
+        def score(self, window: np.ndarray):
+            return {"logit": self.logit, "embedding": None, "model_version": self.model_version}
+
+    settings = Settings(experts=["wavlm", "hybrid_maxbr"], fusion_mode="heuristic_avg")
+    fusion = load_fusion(ARTIFACTS_DIR / "fusion.json")
+    cal = Calibrator("identity", "identity_sigmoid", 1.0, 0.0)
+    policy = load_policy(ARTIFACTS_DIR / "policy.json")
+
+    t = np.linspace(0, 4, 64000, endpoint=False)
+    window = (0.2 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+    # hybrid_maxbr: logit 2.0 -> sigmoid(2.0) = 0.8808 (>0.85)
+    # wavlm: logit 0.5 -> sigmoid(0.5) = 0.6225 (>0.60)
+    # 50/50 fused logit = 1.25 -> sigmoid(1.25) = 0.7773 (<0.80)
+    # Override should kick in and boost to >= 0.80
+    experts = {
+        "wavlm": MockExpert(0.5, "wavlm-v5"),
+        "hybrid_maxbr": MockExpert(2.0, "hybrid_maxbr-v1"),
+    }
+
+    result = process_single_window(
+        window=window,
+        settings=settings,
+        experts=experts,
+        fusion=fusion,
+        calibrator=cal,
+        policy=policy,
+        windows_scored=2,
+    )
+
+    assert result.expert_probabilities["hybrid_maxbr"] > 0.85
+    assert result.expert_probabilities["wavlm"] > 0.60
+    assert result.probability >= 0.80
+
+

@@ -32,7 +32,7 @@ class RelaySettings:
     soft_limit_max_abs: float = float(os.environ.get("SOFT_LIMIT_MAX_ABS", "0.92"))
 
     # Latency drift mitigation
-    queue_maxsize: int = int(os.environ.get("QUEUE_MAXSIZE", "3"))
+    queue_maxsize: int = int(os.environ.get("QUEUE_MAXSIZE", "20"))
     tcp_nodelay: bool = os.environ.get("TCP_NODELAY", "1") == "1"
 
     # Conversion engine

@@ -122,6 +122,12 @@ def process_single_window(
         decision_calibrator = (expert_calibrators or {}).get(picked, calibrator)
     probability = decision_calibrator.probability(fused)
 
+    if expert_calibrators:
+        if "hybrid_maxbr" in expert_calibrators and "hybrid" not in expert_calibrators:
+            expert_calibrators["hybrid"] = expert_calibrators["hybrid_maxbr"]
+        elif "hybrid" in expert_calibrators and "hybrid_maxbr" not in expert_calibrators:
+            expert_calibrators["hybrid_maxbr"] = expert_calibrators["hybrid"]
+
     # Each expert gets its own calibrator; falling back to the global one would
     # read a foreign logit scale, so we only report what we can calibrate.
     expert_probabilities: dict[str, float] = {}
@@ -129,40 +135,67 @@ def process_single_window(
         cal = (expert_calibrators or {}).get(name, calibrator)
         expert_probabilities[name] = float(cal.probability(float(score["logit"])))
 
+    # Support "hybrid_maxbr" as the LFCC key in scores and expert_probabilities alongside "hybrid"
+    # Also populate expert_probabilities["hybrid"] = expert_probabilities["hybrid_maxbr"] so clients looking up either key succeed.
+    if "hybrid_maxbr" in expert_probabilities and "hybrid" not in expert_probabilities:
+        expert_probabilities["hybrid"] = expert_probabilities["hybrid_maxbr"]
+    elif "hybrid" in expert_probabilities and "hybrid_maxbr" not in expert_probabilities:
+        expert_probabilities["hybrid_maxbr"] = expert_probabilities["hybrid"]
+
+    if "hybrid_maxbr" in scores and "hybrid" not in scores:
+        scores["hybrid"] = scores["hybrid_maxbr"]
+    elif "hybrid" in scores and "hybrid_maxbr" not in scores:
+        scores["hybrid_maxbr"] = scores["hybrid"]
+
     if settings.fusion_mode == "heuristic_avg":
         l_w = float(scores["wavlm"]["logit"]) if "wavlm" in scores else 0.0
-        l_l = float(scores["hybrid"]["logit"]) if "hybrid" in scores else 0.0
+        lfcc_key = (
+            "hybrid_maxbr"
+            if "hybrid_maxbr" in scores
+            else ("hybrid" if "hybrid" in scores else None)
+        )
+        l_l = float(scores[lfcc_key]["logit"]) if lfcc_key else 0.0
         l_s = float(scores["ssl"]["logit"]) if "ssl" in scores else 0.0
 
-        # Weights optimized by grid-search on real-world testdata (Sept 2026):
-        #   SSL        : most consistent across codec/domain shifts → weight 0.60
-        #   LFCC hybrid: catches TTS narration-style spoofs well    → weight 0.20
-        #   WavLM      : good on clean audio, noisy on compressed   → weight 0.20
-        W_WAVLM, W_LFCC, W_SSL = 0.20, 0.20, 0.60
-        
-        # Normalise in case one expert is missing
-        experts_present = (
-            ("wavlm" in scores) * W_WAVLM +
-            ("hybrid" in scores) * W_LFCC +
-            ("ssl"   in scores) * W_SSL
-        )
-        if experts_present > 0:
-            fused = float(
-                (l_w * W_WAVLM + l_l * W_LFCC + l_s * W_SSL) / experts_present
+        has_ssl = "ssl" in scores and "ssl" in getattr(settings, "experts", [])
+        if has_ssl:
+            W_WAVLM, W_LFCC, W_SSL = 0.20, 0.20, 0.60
+            experts_present = (
+                ("wavlm" in scores) * W_WAVLM +
+                (lfcc_key is not None) * W_LFCC +
+                W_SSL
             )
+            if experts_present > 0:
+                fused = float(
+                    (l_w * W_WAVLM + l_l * W_LFCC + l_s * W_SSL) / experts_present
+                )
+            else:
+                fused = float((l_w + l_l + l_s) / 3.0)
         else:
-            fused = float((l_w + l_l + l_s) / 3.0)
+            # 2-expert lineup: 50% WavLM + 50% LFCC-LCNN (TakHemlata SSL decommissioned)
+            W_WAVLM, W_LFCC = 0.50, 0.50
+            experts_present = (
+                ("wavlm" in scores) * W_WAVLM +
+                (lfcc_key is not None) * W_LFCC
+            )
+            if experts_present > 0:
+                fused = float((l_w * W_WAVLM + l_l * W_LFCC) / experts_present)
+            else:
+                fused = float((l_w + l_l) / 2.0)
 
         # Calculate final probability from the fused logit
         probability = float(calibrator.probability(fused))
 
         # Strong-agreement override: if LFCC is very confident (>85%) AND
-        # at least one other expert also agrees (>60%), force spoof verdict.
-        # Rescues cases where SSL/WavLM is neutral but LFCC is screaming spoof.
+        # at least one other expert (WavLM) also agrees (>60%), force spoof verdict.
+        # Rescues cases where WavLM is neutral but LFCC is screaming spoof.
         p_w = expert_probabilities.get("wavlm", 0.0)
-        p_l = expert_probabilities.get("hybrid", 0.0)
+        p_l = expert_probabilities.get(
+            "hybrid_maxbr", expert_probabilities.get("hybrid", 0.0)
+        )
         p_s = expert_probabilities.get("ssl", 0.0)
-        if p_l > 0.85 and (p_w > 0.60 or p_s > 0.60):
+        other_agrees = p_w > 0.60 or (has_ssl and p_s > 0.60)
+        if p_l > 0.85 and other_agrees:
             probability = max(probability, 0.80)
 
 

@@ -26,6 +26,8 @@ class AudioCaptureService {
   final _audioLevelController = StreamController<double>.broadcast();
   final _statusController = StreamController<AudioCaptureStatus>.broadcast();
 
+  static const double _emaAlpha = 0.3;
+
   AudioCaptureStatus _status = AudioCaptureStatus.idle;
   String? _errorMessage;
   double _currentLevel = 0.0;
@@ -97,10 +99,13 @@ class AudioCaptureService {
             targetSampleRate: 16000,
           );
 
-          // Calculate RMS level for visual VU meter
-          final level = PcmResampler.calculateRmsLevel(processed);
-          _currentLevel = level;
-          _audioLevelController.add(level);
+          // Calculate RMS level for visual VU meter with EMA smoothing
+          final rawLevel = PcmResampler.calculateRmsLevel(processed);
+          _currentLevel = (_emaAlpha * rawLevel) + ((1.0 - _emaAlpha) * _currentLevel);
+          if (_currentLevel < 0.005) {
+            _currentLevel = 0.0;
+          }
+          _audioLevelController.add(_currentLevel);
 
           _pcmChunkController.add(processed);
         },

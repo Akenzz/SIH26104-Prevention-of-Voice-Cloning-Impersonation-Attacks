@@ -339,12 +339,6 @@ class LiveCallService {
               probability: enabled ? 0.91 : 0.14,
               riskLevel: enabled ? LiveRiskLevel.high : LiveRiskLevel.low,
             ),
-            'ssl': LiveExpertScore(
-              name: 'ssl',
-              label: 'TakHemlata SSL',
-              probability: enabled ? 0.88 : 0.11,
-              riskLevel: enabled ? LiveRiskLevel.high : LiveRiskLevel.low,
-            ),
           },
         );
         _applyRiskAssessment(fallback);
@@ -448,12 +442,6 @@ class LiveCallService {
               name: 'hybrid',
               label: 'LFCC-LCNN Hybrid',
               probability: (prob + 0.04).clamp(0.01, 0.99),
-              riskLevel: level,
-            ),
-            'ssl': LiveExpertScore(
-              name: 'ssl',
-              label: 'TakHemlata SSL',
-              probability: prob,
               riskLevel: level,
             ),
           },

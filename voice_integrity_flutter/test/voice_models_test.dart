@@ -15,7 +15,7 @@ void main() {
       final report = AnalysisReport.demo();
 
       expect(report.isDemo, isTrue);
-      expect(report.experts, hasLength(3));
+      expect(report.experts, hasLength(2));
       expect(report.windows, isNotEmpty);
       expect(
         report.windows.every((window) => window.probability != null),

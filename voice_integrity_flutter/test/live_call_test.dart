@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_integrity_flutter/core/models/live_call_models.dart';
+import 'package:voice_integrity_flutter/core/services/audio_playback_service.dart';
 import 'package:voice_integrity_flutter/core/services/live_call_service.dart';
 import 'package:voice_integrity_flutter/core/services/pcm_resampler.dart';
 
@@ -248,6 +249,50 @@ void main() {
 
       await service.disconnect();
       expect(service.isConnected, isFalse);
+    });
+  });
+
+  group('AudioPlaybackService', () {
+    test('ingestPcmChunk applies EMA smoothing to audio level', () async {
+      final service = AudioPlaybackService();
+
+      // Create a loud 16-bit PCM chunk (3200 bytes = 100ms)
+      final loud = Uint8List(3200);
+      final b = ByteData.view(loud.buffer);
+      for (var i = 0; i < 1600; i++) {
+        b.setInt16(i * 2, 24000, Endian.little);
+      }
+
+      service.ingestPcmChunk(loud);
+      expect(service.currentLevel, greaterThan(0.0));
+      final level1 = service.currentLevel;
+
+      // Second ingest should smoothly track level via EMA
+      service.ingestPcmChunk(loud);
+      expect(service.currentLevel, greaterThan(0.0));
+      expect(service.currentLevel, greaterThanOrEqualTo(level1));
+
+      await service.stop();
+      expect(service.currentLevel, 0.0);
+      await service.dispose();
+    });
+
+    test('toggleMute stops playback and zeroes acoustic level', () async {
+      final service = AudioPlaybackService();
+      final pcm = Uint8List(3200);
+      final b = ByteData.view(pcm.buffer);
+      for (var i = 0; i < 1600; i++) {
+        b.setInt16(i * 2, 18000, Endian.little);
+      }
+
+      service.ingestPcmChunk(pcm);
+      expect(service.currentLevel, greaterThan(0.0));
+
+      await service.toggleMute();
+      expect(service.isMuted, isTrue);
+      expect(service.currentLevel, 0.0);
+
+      await service.dispose();
     });
   });
 }

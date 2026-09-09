@@ -137,9 +137,6 @@ class AnalysisReport {
               .clamp(0.02, .98)
               .toDouble(),
           'hybrid': (overall + .05).clamp(0.02, .98).toDouble(),
-          'ssl': (overall + .11 + math.cos(index) * .03)
-              .clamp(0.02, .98)
-              .toDouble(),
         },
       );
     });
@@ -165,18 +162,10 @@ class AnalysisReport {
           rawLogit: 3.08,
           modelVersion: 'hybrid_clean_plus_newclips_final',
         ),
-        ExpertScore(
-          id: 'ssl',
-          label: 'Expert 3 · TakHemlata SSL',
-          probability: .81,
-          riskState: RiskState.high,
-          rawLogit: 2.61,
-          modelVersion: 'best_SSL_model_LA',
-        ),
       ],
       windows: windows,
-      decisionExpert: 'Weighted calibrated ensemble',
-      agreement: 'Two of three experts indicate elevated risk',
+      decisionExpert: 'Weighted calibrated ensemble (50% WavLM + 50% LFCC-LCNN)',
+      agreement: 'LFCC-LCNN indicates elevated risk; WavLM indicates review needed',
       confidence: 'Medium',
       suspiciousWindows: windows
           .where((window) => (window.probability ?? 0) >= .65)

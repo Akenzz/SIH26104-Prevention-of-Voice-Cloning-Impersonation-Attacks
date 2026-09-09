@@ -111,8 +111,8 @@ HUB_EXPERTS = {
 # ASCII only — these are echoed straight into JSON.
 EXPERT_LABELS = {
     "wavlm":       "Expert-1: WavLM Base+ (v5)",
-    "ssl":         "Expert-2: TakHemlata SSL",
-    "hybrid_maxbr": "Expert-3: LFCC-LCNN Max (132 generators, bandwidth-robust)",
+    "hybrid":      "Expert-2: LFCC-LCNN Hybrid",
+    "hybrid_maxbr": "Expert-2: LFCC-LCNN Max (132 generators, bandwidth-robust)",
 }
 
 # Per-expert Platt calibrators. Each expert's logits live on their own scale, so

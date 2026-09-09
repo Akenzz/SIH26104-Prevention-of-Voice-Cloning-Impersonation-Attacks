@@ -794,7 +794,7 @@ class _SpeakerPlaybackCardState extends State<_SpeakerPlaybackCard> {
                       ),
                       Text(
                         isPlaying
-                            ? 'Streaming incoming voice through speaker (~120ms jitter queue)'
+                            ? 'Streaming incoming voice through speaker (~300ms jitter queue)'
                             : (widget.service.isConnected
                                   ? 'Waiting for voice audio packets...'
                                   : 'Connect receiver to listen'),
@@ -828,7 +828,7 @@ class _SpeakerPlaybackCardState extends State<_SpeakerPlaybackCard> {
               title: 'Speaker Acoustic Output',
               subtitle: '16kHz Audio Stream Playback',
               level: widget.stats.audioLevel,
-              isActive: isPlaying,
+              isActive: isPlaying || widget.stats.audioLevel > 0.01,
               accentColor: AppColors.moss,
             ),
           ],
@@ -852,11 +852,13 @@ class _ExpertEvidenceRow extends StatelessWidget {
     final experts = assessment.expertScores;
     final compact = MediaQuery.sizeOf(context).width < 768;
 
-    // Standard list of the 3 runtime experts
+    final lfccScore =
+        experts['hybrid_maxbr'] ?? experts['hybrid'] ?? experts['lfcc'];
+
+    // Standard list of the 2 active runtime experts
     final items = [
-      ('wavlm', 'Expert 1 · WavLM Base+', 0.20, experts['wavlm']),
-      ('hybrid', 'Expert 2 · LFCC-LCNN', 0.20, experts['hybrid']),
-      ('ssl', 'Expert 3 · TakHemlata SSL', 0.60, experts['ssl']),
+      ('wavlm', 'Expert 1 · WavLM Base+', 0.50, experts['wavlm']),
+      ('hybrid', 'Expert 2 · LFCC-LCNN', 0.50, lfccScore),
     ];
 
     return Column(

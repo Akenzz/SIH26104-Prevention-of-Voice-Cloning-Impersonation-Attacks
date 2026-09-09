@@ -1896,7 +1896,7 @@ class _ModelCards extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _Eyebrow('THE THREE EXPERTS'),
+          const _Eyebrow('THE TWO EXPERTS'),
           const SizedBox(height: 8),
           const Text(
             'Each expert scores the same clean 16 kHz mono audio window. Their raw logits are not interchangeable; each gets its own Platt calibrator before a probability is displayed.',
@@ -1914,13 +1914,6 @@ class _ModelCards extends StatelessWidget {
             tag: 'SPECTRAL FORENSICS',
             body:
                 'An LFCC-LCNN classifier fine-tuned with newer engine clips. The optional bandwidth-robust variant gates audio at 7 kHz to prevent the resampler from becoming an accidental label signal.',
-          ),
-          const Divider(height: 26, color: AppColors.line),
-          const _ModelExplanation(
-            title: '3 · TakHemlata SSL',
-            tag: 'SELF-SUPERVISED SIGNAL',
-            body:
-                'A separate SSL-based expert. In the current batch-analysis path it receives the largest configured weight, so its evidence is visible rather than hidden.',
           ),
         ],
       ),
@@ -1982,9 +1975,8 @@ class _DecisionMethodCard extends StatelessWidget {
             'The deployed batch endpoint uses a probability-space weighted ensemble after each model has been calibrated.',
           ),
           const SizedBox(height: 18),
-          const _FormulaLine(left: 'WavLM', value: '20%'),
-          const _FormulaLine(left: 'LFCC-LCNN Hybrid', value: '20%'),
-          const _FormulaLine(left: 'TakHemlata SSL', value: '60%'),
+          const _FormulaLine(left: 'WavLM Base+', value: '50%'),
+          const _FormulaLine(left: 'LFCC-LCNN Hybrid', value: '50%'),
           const SizedBox(height: 14),
           Container(
             padding: const EdgeInsets.all(14),
@@ -1993,7 +1985,7 @@ class _DecisionMethodCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(13),
             ),
             child: const Text(
-              'Weighted probability → policy band\nLow < 35% · Review 35–64% · High ≥ 65%',
+              'Decision Probability = 50% WavLM Base+ + 50% LFCC-LCNN Hybrid\nLow < 35% · Review 35–64% · High ≥ 65%',
               style: TextStyle(
                 color: AppColors.moss,
                 fontWeight: FontWeight.w800,
