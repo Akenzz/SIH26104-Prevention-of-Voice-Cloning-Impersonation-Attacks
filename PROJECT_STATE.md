@@ -22,12 +22,15 @@ A full-stack voice-integrity detection system with:
 |-----------|-------------|
 | **Realtime backend** | FastAPI service — WebSocket live stream + REST file upload |
 | **Voice Integrity Frontend** | React + Vite dashboard — Live Monitor & File Analysis pages |
+| **Voice Integrity Flutter App** | Flutter cross-platform mobile client (`voice_integrity_flutter/`) — Live Fraud Call Demo (Caller/Receiver), Forensic Review, Models Console |
+| **Audio Relay Service** | Python audio relay microservice (`relay-service/` on :8001) — 200ms chunk crossfader, RVC voice conversion, RingBuffer/EMA fast-reset |
 | **3 expert ML models** | WavLM, SSL (AASIST), LFCC-LCNN — each independently detects synthesis artifacts |
 | **Platt calibration** | Converts each model's raw logit to a calibrated probability |
 | **Fusion layer** | Averages or fuses expert probabilities into one risk score |
 | **Policy engine** | Maps probability to `low / uncertain / high / unavailable` risk bands |
 | **Data pipeline** | Manifest-based multi-lingual dataset loader + evaluation harness |
 | **Training code** | Per-expert training loops with EER + tDCF evaluation |
+| **Documentation & State** | `TEAM_TESTING_GUIDE.md` (testing manual) & `LIVE_DEMO_AND_CHANGES_STATE.md` (live demo architecture & changelog) |
 
 ---
 
@@ -136,8 +139,23 @@ SIH26104-Prevention-of-Voice-Cloning-Impersonation-Attacks/
 │   ├── check_leakage.py       Speaker leakage check between splits
 │   └── manifests/             Generated CSVs (gitignored, machine-specific paths)
 │
+├── relay-service/             Python Audio Relay & Voice Conversion microservice (:8001)
+│   ├── server.py              FastAPI service: WS /ws/caller, WS /ws/receiver, GET /health
+│   ├── session.py             CallSession: manages audio routing, spoof toggle, and broadcast
+│   ├── backend_client.py      WebSocket client to realtime-backend (:8000/ws) + fast-reset
+│   ├── audio/                 ChunkCrossfadeProcessor (200ms blocks/150ms context), DropOldestQueue
+│   ├── converters/            Voice conversion engine (mock pitch-shift + real RVC hook)
+│   └── tests/                 17 passing unit & integration tests
+│
+├── voice_integrity_flutter/   Cross-platform Flutter client
+│   ├── lib/features/live_call/ LiveCallScreen: Caller Mode (Attacker) & Receiver Mode (Victim)
+│   ├── lib/features/dashboard/ VoiceIntegrityShell: Overview, File Review, Guided Demo, Models
+│   ├── lib/core/services/     LiveCallService, AudioCaptureService, AudioPlaybackService, Resampler
+│   └── test/                  15 passing unit and widget tests
+│
+├── TEAM_TESTING_GUIDE.md      Comprehensive testing manual for local, emulator, and physical phones
+├── LIVE_DEMO_AND_CHANGES_STATE.md Complete architecture, failure analysis & changelog state
 ├── CALIBRATION-AND-RESAMPLING.md  Required reading before any model changes
-├── SoFar.md                   ML accuracy analysis notes
 └── start_all.ps1 / .sh        One-command launcher
 ```
 
