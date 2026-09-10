@@ -64,12 +64,6 @@ HUB_EXPERTS = {
         "filename": "hybrid_clean_plus_newclips_final.pth",
         "local_name": "hybrid_clean_plus_newclips_final.pth",
     },
-    # Expert 3: TakHemlata SSL
-    "ssl": {
-        "repo_id": "Akenzz/SIH-Models",
-        "filename": "best_SSL_model_LA.pth",
-        "local_name": "best_SSL_model_LA.pth",
-    },
     # Expert 2c: the bandwidth-robust retrain. Same architecture and data as
     # hybrid_nc, but trained with a 7 kHz parity band gate on BOTH classes and
     # ALL splits, which removes the resampler artifact the other LFCC experts
@@ -122,7 +116,6 @@ EXPERT_LABELS = {
 EXPERT_CALIBRATORS = {
     "wavlm": ARTIFACTS_DIR / "platt_v5.json",
     "hybrid": ARTIFACTS_DIR / "calibrator_hybrid_newclips.json",
-    "ssl": ARTIFACTS_DIR / "platt_ssl.json",
     # hybrid_br is calibrated on GATED dev audio (lfcc-detector/fit_calibrator_br.py,
     # speaker-disjoint half/half: held-out EER 7.84%, ECE 0.061). A calibrator
     # fitted on ungated audio would map logits this model never produces in
@@ -194,11 +187,11 @@ def load_settings() -> Settings:
         raise ValueError(f"FUSION_MODE must be one of 'single', 'fused', 'heuristic', 'heuristic_avg', 'lr_fusion', got {settings.fusion_mode!r}")
     if not settings.experts:
         raise ValueError("EXPERTS must list at least one expert")
-    unknown = [e for e in settings.experts if e not in HUB_EXPERTS and e not in {"dummy", "ssl"}]
+    unknown = [e for e in settings.experts if e not in HUB_EXPERTS and e != "dummy"]
     if unknown:
         raise ValueError(
-            f"Unknown expert(s) {unknown}. Known: {', '.join(HUB_EXPERTS)}, ssl. "
-            "The older lfcc/hindi/mc_v3/prosody/hybrid/hybrid_br experts were removed."
+            f"Unknown expert(s) {unknown}. Known: {', '.join(HUB_EXPERTS)}. "
+            "The older lfcc/hindi/mc_v3/prosody/hybrid/hybrid_br/ssl experts were removed."
         )
     if settings.fusion_mode == "single":
         if not settings.single_expert:

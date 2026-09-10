@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Mic, MicOff, Activity, AlertTriangle, CheckCircle, HelpCircle } from 'lucide-react';
+import { Mic, MicOff, Activity, AlertTriangle, CheckCircle, HelpCircle, Zap, ZapOff } from 'lucide-react';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { Badge, RiskBadge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -7,22 +7,61 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { narrate, verdictLine } from '../lib/narrator';
 import { narrateRemote } from '../lib/narrateRemote';
 import ReasoningLog from '../components/panels/ReasoningLog';
+import { buildSpoofWorkletCode, SPOOF_PROFILE_LABELS, DEFAULT_SPOOF_PROFILE } from '../lib/spoofDsp';
 
-// Inline AudioWorklet processor to capture PCM f32le frames
-const workletCode = `
-class CaptureProcessor extends AudioWorkletProcessor {
-  process(inputs) {
-    const input = inputs[0];
-    if (input && input.length > 0) {
-      const channelData = input[0];
-      // Post the Float32Array to the main thread
-      this.port.postMessage(channelData);
-    }
-    return true;
+// The capture AudioWorklet doubles as the "Talk as Teammate 3 (Spoof)" engine:
+// clean pass-through when spoof is off, and the MockRVC pitch/formant/artifact
+// warp (ported from relay-service) applied in-thread when spoof is on. This is
+// the same recipe the Flutter two-phone demo runs, so the browser can drive the
+// detector into "high" without the relay, a second phone, or a GPU.
+const workletCode = buildSpoofWorkletCode();
+
+// Session recording. The capture worklet already hands us the exact Float32
+// frames that go to the detector (clean, or spoof-warped when "Talk as
+// Teammate 3" is on). We keep those frames in memory for the length of ONE
+// monitoring session and, on stop, mux them into a 16-bit PCM WAV Blob so the
+// operator can play back precisely what the model scored. Nothing touches disk;
+// the Blob is revoked the moment the next session starts.
+function concatFloat32(chunks) {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const out = new Float32Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.length;
   }
+  return out;
 }
-registerProcessor('capture-processor', CaptureProcessor);
-`;
+
+function encodeWavFromFloat32(samples, sampleRate) {
+  const dataSize = samples.length * 2; // 16-bit mono
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  const writeString = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);            // PCM fmt chunk size
+  view.setUint16(20, 1, true);             // format = PCM
+  view.setUint16(22, 1, true);             // channels = mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // byte rate (sr * blockAlign)
+  view.setUint16(32, 2, true);             // block align (mono * 16-bit)
+  view.setUint16(34, 16, true);            // bits per sample
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    offset += 2;
+  }
+  return new Blob([view], { type: 'audio/wav' });
+}
 
 export default function LiveMonitor() {
   const [isRecording, setIsRecording] = useState(false);
@@ -34,6 +73,14 @@ export default function LiveMonitor() {
   const [currentProb, setCurrentProb] = useState(0);
   const [latestData, setLatestData] = useState(null);
   const [reasoning, setReasoning] = useState([]);
+
+  // "Talk as Teammate 3 (Spoof)" state. Refs shadow the state so the worklet
+  // message handlers and the ws.onopen config send always read the live value
+  // without waiting for a re-render.
+  const [spoofEnabled, setSpoofEnabled] = useState(false);
+  const [spoofProfile, setSpoofProfile] = useState(DEFAULT_SPOOF_PROFILE);
+  const spoofEnabledRef = useRef(false);
+  const spoofProfileRef = useRef(DEFAULT_SPOOF_PROFILE);
 
   const wsRef = useRef(null);
   // Task F narration bookkeeping: the narrator is stateful (it only speaks on a
@@ -48,6 +95,25 @@ export default function LiveMonitor() {
   const mediaStreamRef = useRef(null);
   const canvasRef = useRef(null);
   const animationFrameRef = useRef(null);
+
+  // Session playback. We buffer the exact frames the worklet hands us (clean or
+  // spoof-warped — whatever the detector saw) and, on stop, mux them into an
+  // in-memory WAV. Nothing is written to disk; the Blob URL is revoked when the
+  // next session starts, so a recording only ever lives until the next Start.
+  const recordedChunksRef = useRef([]);
+  const recordSampleRateRef = useRef(48000);
+  const sessionUsedSpoofRef = useRef(false);
+  const recordingUrlRef = useRef(null);
+  const mountedRef = useRef(true);
+  const [recordingUrl, setRecordingUrl] = useState(null);
+  const [recordingSpoofed, setRecordingSpoofed] = useState(false);
+
+  // Swap in a new playback URL, revoking the previous Blob so nothing lingers.
+  const setRecordingUrlSafe = useCallback((url) => {
+    if (recordingUrlRef.current) URL.revokeObjectURL(recordingUrlRef.current);
+    recordingUrlRef.current = url;
+    setRecordingUrl(url);
+  }, []);
 
   const connectAndStart = async () => {
     try {
@@ -76,6 +142,17 @@ export default function LiveMonitor() {
         setReasoning([]);
         prevMsgRef.current = null;
         lastMsgRef.current = null;
+        // Every session starts as your real voice; the operator opts into spoof.
+        setSpoofEnabled(false);
+        spoofEnabledRef.current = false;
+
+        // Start a fresh recording and drop the previous session's playback, so a
+        // clip only ever lives until the next Start (in-memory only, no disk).
+        recordedChunksRef.current = [];
+        recordSampleRateRef.current = sampleRate;
+        sessionUsedSpoofRef.current = false;
+        setRecordingSpoofed(false);
+        setRecordingUrlSafe(null);
 
         // Ask the backend whether the optional Groq narration path is live. If
         // not (no GROQ_API_KEY), we silently use the local template narrator.
@@ -138,12 +215,25 @@ export default function LiveMonitor() {
         };
         drawWaveform();
 
-        const workletNode = new AudioWorkletNode(audioCtx, 'capture-processor');
+        const workletNode = new AudioWorkletNode(audioCtx, 'spoof-capture-processor');
         workletNodeRef.current = workletNode;
+        // Prime the worklet with the current spoof mode + profile before any audio
+        // flows, so a mid-session Start always begins in a known state.
+        workletNode.port.postMessage({
+          type: 'config',
+          spoofEnabled: spoofEnabledRef.current,
+          profile: spoofProfileRef.current,
+        });
 
         workletNode.port.onmessage = (e) => {
           const f32Array = e.data;
-          // Send raw binary float32 array
+          // Keep this frame for session playback: it is exactly what the detector
+          // sees (clean, or spoof-warped when "Talk as Teammate 3" is on). The
+          // worklet hands us a fresh buffer per block and ws.send copies rather
+          // than transfers, so retaining the reference is safe.
+          recordedChunksRef.current.push(f32Array);
+          // Send raw binary float32 array (clean pass-through, or the spoof-warped
+          // frame when "Talk as Teammate 3" is on — same bytes either way).
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(f32Array.buffer);
           }
@@ -161,12 +251,23 @@ export default function LiveMonitor() {
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.type === 'score') {
+          // Per-expert probabilities live under data.scores[name].probability on
+          // the /ws wire (there is no top-level data.expert_probabilities — that
+          // key was always undefined, which is why the expert lines never drew).
+          const expertProbs = Object.fromEntries(
+            Object.entries(data.scores || {})
+              // SSL (TakHemlata) is decommissioned — the lineup is two models
+              // (WavLM + LFCC-LCNN). Drop any stray `ssl` score so the chart can
+              // never render a third expert line.
+              .filter(([k, v]) => k !== 'ssl' && typeof v?.probability === 'number')
+              .map(([k, v]) => [k, v.probability])
+          );
           const newScore = {
             time: (data.sequence_number * 0.5).toFixed(1), // Assuming 0.5s hop for display
             prob: data.smoothed_probability,
             lr_prob: data.lr_probability,
             state: data.risk_state,
-            expert_probs: data.expert_probabilities || {},
+            expert_probs: expertProbs,
           };
           
           setScores(prev => {
@@ -268,16 +369,81 @@ export default function LiveMonitor() {
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
       mediaStreamRef.current = null;
     }
-    
+
+    // Mux the captured frames into an in-memory WAV for playback. Skip on
+    // unmount (nothing to show) and when nothing was captured.
+    const chunks = recordedChunksRef.current;
+    recordedChunksRef.current = [];
+    if (mountedRef.current && chunks.length > 0) {
+      const pcm = concatFloat32(chunks);
+      if (pcm.length > 0) {
+        const blob = encodeWavFromFloat32(pcm, recordSampleRateRef.current);
+        setRecordingUrlSafe(URL.createObjectURL(blob));
+        setRecordingSpoofed(sessionUsedSpoofRef.current);
+      }
+    }
+
     setStatus((prev) => prev !== 'disconnected' ? 'disconnected' : prev);
-  }, []); // Empty dependency array
+  }, [setRecordingUrlSafe]);
 
   // Cleanup on unmount
   useEffect(() => {
+    // Set on (re)mount so React 18 StrictMode's setup→cleanup→setup dance leaves
+    // mountedRef true; without this the first cleanup pins it false for good and
+    // stopRecording would silently skip muxing the WAV.
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
+      if (recordingUrlRef.current) URL.revokeObjectURL(recordingUrlRef.current);
       stopRecording();
     };
   }, [stopRecording]);
+
+  // Flip the live spoof on/off. Mirrors relay-service CallSession.set_spoof:
+  // reset the DSP state, then re-send `start` so the backend rebuilds its
+  // resampler + ring buffer + EMA and the verdict flips fast (~1.2s) instead of
+  // dragging the old ~5s smoothing tail across the transition.
+  const toggleSpoof = useCallback(() => {
+    const next = !spoofEnabledRef.current;
+    spoofEnabledRef.current = next;
+    setSpoofEnabled(next);
+    // Remember that this session's audio was warped, so the playback can be
+    // labelled honestly ("includes spoofed voice") once monitoring stops.
+    if (next) sessionUsedSpoofRef.current = true;
+
+    const node = workletNodeRef.current;
+    if (node) {
+      node.port.postMessage({ type: 'reset' });
+      node.port.postMessage({ type: 'config', spoofEnabled: next, profile: spoofProfileRef.current });
+    }
+
+    const ws = wsRef.current;
+    const ctx = audioContextRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN && ctx) {
+      ws.send(JSON.stringify({
+        type: 'start',
+        sample_rate: ctx.sampleRate,
+        encoding: 'pcm_f32le',
+        channels: 1,
+      }));
+    }
+  }, []);
+
+  const changeSpoofProfile = useCallback((name) => {
+    spoofProfileRef.current = name;
+    setSpoofProfile(name);
+    const node = workletNodeRef.current;
+    if (node) {
+      node.port.postMessage({ type: 'config', spoofEnabled: spoofEnabledRef.current, profile: name });
+    }
+  }, []);
+
+  // Union of expert keys seen across the buffered windows. Deriving from every
+  // row (not just scores[0]) means the lines still appear when the first windows
+  // were "collecting" and carried no per-expert scores yet.
+  const expertKeys = Array.from(
+    new Set(scores.flatMap((s) => Object.keys(s.expert_probs || {})))
+  );
 
   const StatusIcon = {
     low: CheckCircle,
@@ -324,8 +490,51 @@ export default function LiveMonitor() {
         </Card>
       )}
 
+      {isRecording && (
+        <Card className={spoofEnabled
+          ? 'border-red-500/40 bg-red-500/[0.06] shadow-[0_0_28px_-6px_rgba(239,68,68,0.55)] transition-shadow'
+          : 'border-zinc-800 transition-shadow'}>
+          <CardContent className="flex flex-col sm:flex-row sm:items-center gap-4 py-4">
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className={`h-2 w-2 rounded-full ${spoofEnabled ? 'bg-red-500 animate-pulse' : 'bg-zinc-600'}`} />
+                <p className="text-sm font-semibold text-zinc-200">Attacker Console</p>
+                {spoofEnabled && (
+                  <span className="text-[10px] uppercase font-bold tracking-wider bg-red-500/10 text-red-400 border border-red-500/30 px-2 py-0.5 rounded">
+                    Spoofing Live
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-zinc-500 mt-1">
+                {spoofEnabled
+                  ? 'Your mic is being warped live with the MockRVC clone chain — pitch + formant shift plus injected neural-vocoder artifacts — the same recipe as the two-phone demo.'
+                  : 'Streaming your real voice. Flip the switch to warp it live and see the detector react.'}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <select
+                value={spoofProfile}
+                onChange={(e) => changeSpoofProfile(e.target.value)}
+                className="bg-zinc-900 border border-zinc-700 rounded-lg text-sm text-zinc-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                aria-label="Spoof voice profile"
+              >
+                {Object.entries(SPOOF_PROFILE_LABELS).map(([key, label]) => (
+                  <option key={key} value={key}>{label}</option>
+                ))}
+              </select>
+
+              <Button onClick={toggleSpoof} variant={spoofEnabled ? 'danger' : 'secondary'}>
+                {spoofEnabled ? <ZapOff size={16} /> : <Zap size={16} />}
+                {spoofEnabled ? 'Stop Spoofing' : 'Talk as Teammate 3 (Spoof)'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="md:col-span-1 flex flex-col justify-center items-center p-6 md:p-8 text-center min-h-[250px] md:min-h-[300px]">
+        <Card className={`md:col-span-1 flex flex-col justify-center items-center p-6 md:p-8 text-center min-h-[250px] md:min-h-[300px] transition-shadow ${spoofEnabled ? 'border-red-500/40 shadow-[0_0_28px_-8px_rgba(239,68,68,0.5)]' : ''}`}>
           {isRecording ? (
              <>
                <div className="relative mb-6">
@@ -341,7 +550,7 @@ export default function LiveMonitor() {
                  <RiskBadge state={currentState || 'collecting'} />
                  {(() => {
                     if (!latestData || !currentState || currentState === 'collecting') return null;
-                    const wavlmProb = latestData.expert_probabilities?.wavlm;
+                    const wavlmProb = latestData.scores?.wavlm?.probability;
                     if (typeof wavlmProb !== 'number') return null;
                     if ((currentState === 'high' || currentState === 'uncertain') && wavlmProb < 0.35) {
                       return <span className="text-[10px] uppercase font-bold tracking-wider bg-amber-500/10 text-amber-500 border border-amber-500/20 px-2 py-0.5 rounded flex items-center gap-1"><AlertTriangle size={10} /> Disagreement</span>;
@@ -407,21 +616,25 @@ export default function LiveMonitor() {
                     <ReferenceLine y={0.65} stroke="#ef4444" strokeDasharray="3 3" opacity={0.3} />
                     
                     {/* Render a line for each expert dynamically */}
-                    {scores.length > 0 && scores[0].expert_probs && Object.keys(scores[0].expert_probs).map(expert => {
+                    {expertKeys.map(expert => {
                       const color = {
-                        wavlm: "#3b82f6",       // blue
-                        hybrid_maxbr: "#ec4899", // pink
+                        wavlm: "#3b82f6",        // blue  · Expert 1 WavLM
+                        hybrid: "#ec4899",       // pink  · LFCC-LCNN hybrid family
+                        hybrid_br: "#ec4899",
+                        hybrid_maxbr: "#ec4899",
+                        hybrid_nc: "#f472b6",
                       }[expert] || "#8b5cf6";
                       return (
-                        <Line 
+                        <Line
                           key={expert}
-                          type="monotone" 
+                          type="monotone"
                           dataKey={(d) => d.expert_probs?.[expert] ?? null}
                           name={expert}
-                          stroke={color} 
+                          stroke={color}
                           strokeWidth={2}
                           strokeDasharray="5 5"
                           dot={false}
+                          connectNulls
                           activeDot={{ r: 4, fill: color }}
                         />
                       );
@@ -455,6 +668,40 @@ export default function LiveMonitor() {
           </CardContent>
         </Card>
       </div>
+
+      {!isRecording && recordingUrl && (
+        <Card className={recordingSpoofed ? 'border-red-500/30' : 'border-emerald-500/20'}>
+          <CardHeader
+            title="Session Playback"
+            description="Exactly the audio the detector analyzed this session. Kept in memory only — it clears the moment you start the next session, and nothing is saved to disk."
+          />
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {recordingSpoofed ? (
+                <span className="text-[10px] uppercase font-bold tracking-wider bg-red-500/10 text-red-400 border border-red-500/30 px-2 py-0.5 rounded flex items-center gap-1">
+                  <Zap size={10} /> Includes spoofed voice
+                </span>
+              ) : (
+                <span className="text-[10px] uppercase font-bold tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1">
+                  <Mic size={10} /> Your real voice
+                </span>
+              )}
+              <span className="text-xs text-zinc-500">
+                {recordingSpoofed
+                  ? 'This is the warped voice the model scored — play it back to hear what the detector heard.'
+                  : 'Play it back to hear what the detector heard.'}
+              </span>
+            </div>
+            <audio
+              key={recordingUrl}
+              src={recordingUrl}
+              controls
+              controlsList="nodownload noplaybackrate"
+              className="w-full"
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {(isRecording || reasoning.length > 0) && (
         <Card>

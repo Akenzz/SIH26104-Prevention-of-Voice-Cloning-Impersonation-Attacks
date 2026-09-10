@@ -194,9 +194,9 @@ def health() -> JSONResponse:
             ],
             "decision_expert": settings.single_expert,
             "decision_label": {
-                "lr_fusion": "LR Fusion (WavLM + LFCC + SSL)",
+                "lr_fusion": "LR Fusion (WavLM + LFCC)",
                 "heuristic_avg": "50% WavLM + 50% LFCC-LCNN Hybrid",
-                "heuristic": "LFCC + SSL Heuristic",
+                "heuristic": "WavLM + LFCC Heuristic",
                 "single": EXPERT_LABELS.get(settings.single_expert, settings.single_expert),
             }.get(settings.fusion_mode, settings.fusion_mode),
             "fusion_mode": settings.fusion_mode,
@@ -336,21 +336,19 @@ async def predict_file(file: UploadFile = File(...)):
                     "hybrid_maxbr", smoothed_expert_probs.get("hybrid", 0.0)
                 )
                 has_lfcc = "hybrid_maxbr" in smoothed_expert_probs or "hybrid" in smoothed_expert_probs
-                p_s = smoothed_expert_probs.get("ssl", 0.0)
-                W_WAVLM, W_LFCC, W_SSL = 0.50, 0.50, 0.00
-                
+                W_WAVLM, W_LFCC = 0.50, 0.50
+
                 experts_present = (
                     ("wavlm" in smoothed_expert_probs) * W_WAVLM +
-                    has_lfcc * W_LFCC +
-                    ("ssl"   in smoothed_expert_probs) * W_SSL
+                    has_lfcc * W_LFCC
                 )
                 if experts_present > 0:
-                    probability = float((p_w * W_WAVLM + p_l * W_LFCC + p_s * W_SSL) / experts_present)
+                    probability = float((p_w * W_WAVLM + p_l * W_LFCC) / experts_present)
                 else:
-                    probability = float((p_w + p_l + p_s) / 2.0)
-                    
+                    probability = float((p_w + p_l) / 2.0)
+
                 # Agreement override
-                if p_l > 0.85 and (p_w > 0.60 or ("ssl" in smoothed_expert_probs and p_s > 0.60)):
+                if p_l > 0.85 and p_w > 0.60:
                     probability = max(probability, 0.80)
                     
                 state, action, flag = decide(

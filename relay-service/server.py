@@ -73,7 +73,7 @@ async def health():
         "sample_rate": settings.sample_rate,
         "encoding": settings.encoding,
         "converter_type": settings.converter_type,
-        "experts": ["wavlm", "hybrid", "ssl"],
+        "experts": ["wavlm", "hybrid"],
         "expert_details": [
             {
                 "name": "wavlm",
@@ -84,19 +84,13 @@ async def health():
             {
                 "name": "hybrid",
                 "label": "Expert 2 · LFCC-LCNN Hybrid",
-                "calibrator_version": "hybrid_clean_plus_newclips_final",
-                "is_decision_expert": False,
-            },
-            {
-                "name": "ssl",
-                "label": "Expert 3 · TakHemlata SSL",
-                "calibrator_version": "best_SSL_model_LA",
+                "calibrator_version": "hybrid_maxbr",
                 "is_decision_expert": True,
             },
         ],
-        "decision_expert": "ssl",
-        "decision_label": "LR Fusion (WavLM + LFCC + SSL)",
-        "fusion_mode": "lr_fusion",
+        "decision_expert": "hybrid",
+        "decision_label": "50% WavLM + 50% LFCC-LCNN Hybrid",
+        "fusion_mode": "heuristic_avg",
         "window_sec": 4.0,
         "hop_sec": 0.5,
         "target_sample_rate": settings.sample_rate,

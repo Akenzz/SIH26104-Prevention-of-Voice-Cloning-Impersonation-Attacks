@@ -41,8 +41,8 @@ def decision_expert(
 
     `single` selects one expert's logit outright, and `lr_fusion` returns that
     same logit as the value pipeline.py falls back to whenever the LR model is
-    unavailable (missing joblib, or `ssl`/`wavlm` not in EXPERTS). In both cases
-    the returned float is ONE model's logit and must be read on THAT model's
+    unavailable (missing joblib, or `wavlm`/`hybrid_maxbr` not in EXPERTS). In both
+    cases the returned float is ONE model's logit and must be read on THAT model's
     Platt scale -- the global CALIBRATOR_PATH one generally belongs to a
     different expert.
 
@@ -69,7 +69,7 @@ def fuse_logits(
         raise ValueError("no expert scores to fuse")
 
     if mode == "heuristic_avg":
-        return 0.0, "hybrid+ssl"
+        return 0.0, "wavlm+lfcc"
 
     if mode == "lr_fusion":
         # The actual probability is computed in pipeline.py from the LR model.
@@ -84,9 +84,9 @@ def fuse_logits(
     if mode == "heuristic":
         # The tuned real-world threshold was -5.0.
         # We shift it by +5.0 so 0.0 is the center decision boundary for the calibrator sigmoid.
+        # Formerly summed LFCC + SSL logits; SSL is decommissioned, so this is LFCC-only.
         l_logit = float(scores["hybrid"]["logit"]) if "hybrid" in scores else 0.0
-        s_logit = float(scores["ssl"]["logit"]) if "ssl" in scores else 0.0
-        return float(l_logit + s_logit + 5.0), "hybrid+ssl"
+        return float(l_logit + 5.0), "hybrid"
 
     if mode != "fused":
         raise ValueError(f"unknown fusion mode {mode!r}")

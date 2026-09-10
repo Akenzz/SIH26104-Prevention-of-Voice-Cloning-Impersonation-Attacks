@@ -155,47 +155,29 @@ def process_single_window(
             else ("hybrid" if "hybrid" in scores else None)
         )
         l_l = float(scores[lfcc_key]["logit"]) if lfcc_key else 0.0
-        l_s = float(scores["ssl"]["logit"]) if "ssl" in scores else 0.0
 
-        has_ssl = "ssl" in scores and "ssl" in getattr(settings, "experts", [])
-        if has_ssl:
-            W_WAVLM, W_LFCC, W_SSL = 0.20, 0.20, 0.60
-            experts_present = (
-                ("wavlm" in scores) * W_WAVLM +
-                (lfcc_key is not None) * W_LFCC +
-                W_SSL
-            )
-            if experts_present > 0:
-                fused = float(
-                    (l_w * W_WAVLM + l_l * W_LFCC + l_s * W_SSL) / experts_present
-                )
-            else:
-                fused = float((l_w + l_l + l_s) / 3.0)
+        # 2-expert lineup: 50% WavLM + 50% LFCC-LCNN (TakHemlata SSL decommissioned)
+        W_WAVLM, W_LFCC = 0.50, 0.50
+        experts_present = (
+            ("wavlm" in scores) * W_WAVLM +
+            (lfcc_key is not None) * W_LFCC
+        )
+        if experts_present > 0:
+            fused = float((l_w * W_WAVLM + l_l * W_LFCC) / experts_present)
         else:
-            # 2-expert lineup: 50% WavLM + 50% LFCC-LCNN (TakHemlata SSL decommissioned)
-            W_WAVLM, W_LFCC = 0.50, 0.50
-            experts_present = (
-                ("wavlm" in scores) * W_WAVLM +
-                (lfcc_key is not None) * W_LFCC
-            )
-            if experts_present > 0:
-                fused = float((l_w * W_WAVLM + l_l * W_LFCC) / experts_present)
-            else:
-                fused = float((l_w + l_l) / 2.0)
+            fused = float((l_w + l_l) / 2.0)
 
         # Calculate final probability from the fused logit
         probability = float(calibrator.probability(fused))
 
         # Strong-agreement override: if LFCC is very confident (>85%) AND
-        # at least one other expert (WavLM) also agrees (>60%), force spoof verdict.
-        # Rescues cases where WavLM is neutral but LFCC is screaming spoof.
+        # WavLM also agrees (>60%), force spoof verdict. Rescues cases where
+        # WavLM is neutral but LFCC is screaming spoof.
         p_w = expert_probabilities.get("wavlm", 0.0)
         p_l = expert_probabilities.get(
             "hybrid_maxbr", expert_probabilities.get("hybrid", 0.0)
         )
-        p_s = expert_probabilities.get("ssl", 0.0)
-        other_agrees = p_w > 0.60 or (has_ssl and p_s > 0.60)
-        if p_l > 0.85 and other_agrees:
+        if p_l > 0.85 and p_w > 0.60:
             probability = max(probability, 0.80)
 
 
