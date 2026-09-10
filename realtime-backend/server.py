@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import io
 import json
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-import io
 import warnings
 warnings.filterwarnings("ignore")
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, Request
@@ -17,6 +18,7 @@ import numpy as np
 import soundfile as sf
 
 from audio.resample import to_mono, to_target_rate
+from audio.ring_buffer import RingBuffer
 from calibration import (
     assert_calibrator_gates_match,
     assert_single_expert_calibrator,
@@ -30,7 +32,7 @@ from narration import sanitize, stream_groq
 from audio.vad import has_speech
 from aggregation import LogitEMA
 from pipeline import ConnectionState, process_single_window
-from policy import band, load_policy
+from policy import band, decide, load_policy
 
 
 def summarize_file_results(results: list[dict[str, Any]], experts: list[str], *, policy: Any) -> dict[str, Any]:
@@ -136,6 +138,10 @@ policy = load_policy(settings.policy_path)
 # (the SINGLE_EXPERT one); these exist so each model reports its own honest
 # probability instead of being read on a foreign logit scale.
 expert_calibrators = load_expert_calibrators(EXPERT_CALIBRATORS, settings.experts, calibrator)
+if "hybrid_maxbr" in expert_calibrators and "hybrid" not in expert_calibrators:
+    expert_calibrators["hybrid"] = expert_calibrators["hybrid_maxbr"]
+elif "hybrid" in expert_calibrators and "hybrid_maxbr" not in expert_calibrators:
+    expert_calibrators["hybrid_maxbr"] = expert_calibrators["hybrid"]
 
 
 @asynccontextmanager
@@ -235,7 +241,6 @@ async def predict_file(file: UploadFile = File(...)):
     resampled = audio_tensor.squeeze(0).numpy()
 
     # 2. Extract ALL windows
-    from audio.ring_buffer import RingBuffer
     window_samples = settings.window_samples
     hop_samples = settings.hop_samples
     
@@ -246,148 +251,169 @@ async def predict_file(file: UploadFile = File(...)):
     windows = buffer.push(resampled)
     
     async def event_generator():
-        # Trackers in LOGIT space (cumulative mean for batch processing)
-        expert_logits = {name: [] for name in experts}
-        
-        results = []
-        spoof_windows = []
-        valid_windows_scored = 0
-        skipped_windows = 0
-        
-        # We will track final summary state here
-        for i, window in enumerate(windows):
-            window_index = i + 1
-            start_time_sec = i * settings.hop_sec
+        try:
+            # Trackers in LOGIT space (cumulative mean for batch processing)
+            expert_logits = {name: [] for name in experts}
+            if "hybrid_maxbr" in experts and "hybrid" not in expert_logits:
+                expert_logits["hybrid"] = []
+            elif "hybrid" in experts and "hybrid_maxbr" not in expert_logits:
+                expert_logits["hybrid_maxbr"] = []
             
-            import asyncio
-            # VAD Filtering
-            is_speech = await asyncio.to_thread(has_speech, window, settings.target_sample_rate)
-            if not is_speech:
-                skipped_windows += 1
-                yield f"data: {json.dumps({'event': 'skipped', 'window_index': window_index, 'start_time_sec': start_time_sec})}\n\n"
-                continue
+            results = []
+            spoof_windows = []
+            valid_windows_scored = 0
+            skipped_windows = 0
+            
+            # We will track final summary state here
+            for i, window in enumerate(windows):
+                window_index = i + 1
+                start_time_sec = i * settings.hop_sec
+                
+                # VAD Filtering
+                is_speech = await asyncio.to_thread(has_speech, window, settings.target_sample_rate)
+                if not is_speech:
+                    skipped_windows += 1
+                    yield f"data: {json.dumps({'event': 'skipped', 'window_index': window_index, 'start_time_sec': start_time_sec})}\n\n"
+                    continue
 
-            valid_windows_scored += 1
-            
-            # Score window (run in thread to prevent blocking the async SSE generator)
-            result = await asyncio.to_thread(
-                process_single_window,
-                window,
-                settings,
-                experts,
-                fusion,
-                calibrator,
-                policy,
-                valid_windows_scored,
-                None,
-                False,
-                expert_calibrators
-            )
-            
-            state, flag = result.risk_state, result.audio_quality
-            scores, quality = result.scores, result.quality
-            
-            # If quality fails, we still process? Wait, evaluate_slices doesn't do quality checks.
-            # We'll trust process_single_window's quality check
-            if not quality.ok:
-                yield f"data: {json.dumps({'event': 'quality_fail', 'window_index': window_index, 'reason': quality.reason})}\n\n"
-                continue
+                valid_windows_scored += 1
                 
-            # Logit Aggregation & Fusion
-            smoothed_expert_logits = {}
-            smoothed_expert_probs = {}
-            for name, score_data in scores.items():
-                raw_logit = float(score_data["logit"])
-                expert_logits[name].append(raw_logit)
-                # For file batch analysis, we use cumulative mean to match offline evaluation exactly
-                smoothed_logit = sum(expert_logits[name]) / len(expert_logits[name])
+                # Score window (run in thread to prevent blocking the async SSE generator)
+                result = await asyncio.to_thread(
+                    process_single_window,
+                    window,
+                    settings,
+                    experts,
+                    fusion,
+                    calibrator,
+                    policy,
+                    valid_windows_scored,
+                    None,
+                    False,
+                    expert_calibrators
+                )
                 
-                smoothed_expert_logits[name] = smoothed_logit
-                cal = expert_calibrators.get(name, calibrator)
-                smoothed_expert_probs[name] = float(cal.probability(smoothed_logit))
+                state, flag = result.risk_state, result.audio_quality
+                scores, quality = result.scores, result.quality
                 
-            # Probability-space fusion to match optimize_weights.py exactly
-            p_w = smoothed_expert_probs.get("wavlm", 0.0)
-            p_l = smoothed_expert_probs.get(
-                "hybrid_maxbr", smoothed_expert_probs.get("hybrid", 0.0)
-            )
-            has_lfcc = "hybrid_maxbr" in smoothed_expert_probs or "hybrid" in smoothed_expert_probs
-            p_s = smoothed_expert_probs.get("ssl", 0.0)
-            W_WAVLM, W_LFCC, W_SSL = 0.50, 0.50, 0.00
-            
-            experts_present = (
-                ("wavlm" in smoothed_expert_probs) * W_WAVLM +
-                has_lfcc * W_LFCC +
-                ("ssl"   in smoothed_expert_probs) * W_SSL
-            )
-            if experts_present > 0:
-                probability = float((p_w * W_WAVLM + p_l * W_LFCC + p_s * W_SSL) / experts_present)
-            else:
-                probability = float((p_w + p_l + p_s) / 2.0)
+                # If quality fails, we still process? Wait, evaluate_slices doesn't do quality checks.
+                # We'll trust process_single_window's quality check
+                if not quality.ok:
+                    yield f"data: {json.dumps({'event': 'quality_fail', 'window_index': window_index, 'reason': quality.reason})}\n\n"
+                    continue
+                    
+                # Logit Aggregation & Fusion
+                smoothed_expert_logits = {}
+                smoothed_expert_probs = {}
+                for name, score_data in scores.items():
+                    if name not in expert_logits:
+                        expert_logits[name] = []
+                    raw_logit = float(score_data["logit"])
+                    expert_logits[name].append(raw_logit)
+                    # For file batch analysis, we use cumulative mean to match offline evaluation exactly
+                    smoothed_logit = sum(expert_logits[name]) / len(expert_logits[name])
+                    
+                    smoothed_expert_logits[name] = smoothed_logit
+                    cal = expert_calibrators.get(name, calibrator)
+                    smoothed_expert_probs[name] = float(cal.probability(smoothed_logit))
+                    
+                if "hybrid_maxbr" in smoothed_expert_probs and "hybrid" not in smoothed_expert_probs:
+                    smoothed_expert_probs["hybrid"] = smoothed_expert_probs["hybrid_maxbr"]
+                elif "hybrid" in smoothed_expert_probs and "hybrid_maxbr" not in smoothed_expert_probs:
+                    smoothed_expert_probs["hybrid_maxbr"] = smoothed_expert_probs["hybrid"]
+
+                # Probability-space fusion to match optimize_weights.py exactly
+                p_w = smoothed_expert_probs.get("wavlm", 0.0)
+                p_l = smoothed_expert_probs.get(
+                    "hybrid_maxbr", smoothed_expert_probs.get("hybrid", 0.0)
+                )
+                has_lfcc = "hybrid_maxbr" in smoothed_expert_probs or "hybrid" in smoothed_expert_probs
+                p_s = smoothed_expert_probs.get("ssl", 0.0)
+                W_WAVLM, W_LFCC, W_SSL = 0.50, 0.50, 0.00
                 
-            # Agreement override
-            if p_l > 0.85 and (p_w > 0.60 or ("ssl" in smoothed_expert_probs and p_s > 0.60)):
-                probability = max(probability, 0.80)
+                experts_present = (
+                    ("wavlm" in smoothed_expert_probs) * W_WAVLM +
+                    has_lfcc * W_LFCC +
+                    ("ssl"   in smoothed_expert_probs) * W_SSL
+                )
+                if experts_present > 0:
+                    probability = float((p_w * W_WAVLM + p_l * W_LFCC + p_s * W_SSL) / experts_present)
+                else:
+                    probability = float((p_w + p_l + p_s) / 2.0)
+                    
+                # Agreement override
+                if p_l > 0.85 and (p_w > 0.60 or ("ssl" in smoothed_expert_probs and p_s > 0.60)):
+                    probability = max(probability, 0.80)
+                    
+                state, action, flag = decide(
+                    quality_ok=True,
+                    quality_reason=None,
+                    windows_scored=valid_windows_scored,
+                    smoothed_probability=probability,
+                    config=policy,
+                )
                 
-            from policy import decide
-            state, action, flag = decide(
-                quality_ok=True,
-                quality_reason=None,
-                windows_scored=valid_windows_scored,
-                smoothed_probability=probability,
-                config=policy,
-            )
-            
-            if probability > 0.5:
-                spoof_windows.append(window_index)
-                
-            window_payload = {
-                "event": "window_scored",
-                "window_index": window_index,
-                "start_time_sec": start_time_sec,
-                "risk_state": state,
-                "calibrated_probability": probability,
-                "weighted_probability": probability,
-                "heuristic_avg_probability": probability,
-                "raw_per_expert_scores": {k: float(v["logit"]) for k, v in scores.items()},
-                "per_expert_probability": smoothed_expert_probs,
-            }
-            results.append(window_payload)
-            yield f"data: {json.dumps(window_payload)}\n\n"
-            
-            # Yield control to the event loop to flush the TCP buffer
-            await asyncio.sleep(0.01)
-            
-        # Final summary
-        if valid_windows_scored == 0:
-            summary = {
-                "event": "summary",
-                "overall_risk_state": "unavailable",
-                "final_smoothed_probability": None,
-                "weighted_spoof_probability": None,
-                "spoof_windows_count": 0,
-                "total_windows_count": len(windows),
-                "skipped_windows_count": skipped_windows,
-                "experts": []
-            }
-        else:
-            summary = summarize_file_results(results, list(experts), policy=policy)
-            summary["spoof_windows_count"] = len(spoof_windows)
-            summary["total_windows_count"] = len(windows)
-            summary["skipped_windows_count"] = skipped_windows
-            summary["decision_expert"] = settings.single_expert
-            summary["experts"] = [
-                {
-                    "name": name,
-                    "label": EXPERT_LABELS.get(name, name),
-                    "probability": summary["experts"][name]["probability"],
-                    "risk_state": summary["experts"][name]["risk_state"],
+                if probability > 0.5:
+                    spoof_windows.append(window_index)
+                    
+                window_payload = {
+                    "event": "window_scored",
+                    "window_index": window_index,
+                    "start_time_sec": start_time_sec,
+                    "risk_state": state,
+                    "calibrated_probability": probability,
+                    "weighted_probability": probability,
+                    "heuristic_avg_probability": probability,
+                    "raw_per_expert_scores": {k: float(v["logit"]) for k, v in scores.items()},
+                    "per_expert_probability": smoothed_expert_probs,
                 }
-                for name in experts
-            ]
-        yield f"data: {json.dumps(summary)}\n\n"
+                results.append(window_payload)
+                yield f"data: {json.dumps(window_payload)}\n\n"
+                
+                # Yield control to the event loop to flush the TCP buffer
+                await asyncio.sleep(0.01)
+                
+            # Final summary
+            if valid_windows_scored == 0:
+                summary = {
+                    "event": "summary",
+                    "overall_risk_state": "unavailable",
+                    "final_smoothed_probability": None,
+                    "weighted_spoof_probability": None,
+                    "spoof_windows_count": 0,
+                    "total_windows_count": len(windows),
+                    "skipped_windows_count": skipped_windows,
+                    "experts": []
+                }
+            else:
+                summary = summarize_file_results(results, list(experts), policy=policy)
+                summary["spoof_windows_count"] = len(spoof_windows)
+                summary["total_windows_count"] = len(windows)
+                summary["skipped_windows_count"] = skipped_windows
+                summary["decision_expert"] = settings.single_expert
+                summary["experts"] = [
+                    {
+                        "name": name,
+                        "label": EXPERT_LABELS.get(name, name),
+                        "probability": summary["experts"][name]["probability"],
+                        "risk_state": summary["experts"][name]["risk_state"],
+                    }
+                    for name in experts
+                ]
+            yield f"data: {json.dumps(summary)}\n\n"
+        except Exception as exc:
+            logger.exception("Error during predict-file streaming: %s", exc)
+            yield f"data: {json.dumps({'event': 'error', 'detail': str(exc)})}\n\n"
         
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 

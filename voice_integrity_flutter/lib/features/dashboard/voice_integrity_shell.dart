@@ -2335,6 +2335,9 @@ IconData _riskIcon(RiskState risk) => switch (risk) {
 };
 
 String _errorExplanation(String raw) {
+  if (raw.contains('Backend error:')) {
+    return raw.replaceFirst('VoiceIntegrityApiException: ', '');
+  }
   if (raw.contains('Connection refused') ||
       raw.contains('SocketException') ||
       raw.contains('Connection closed') ||

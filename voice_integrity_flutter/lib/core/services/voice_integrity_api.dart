@@ -60,12 +60,33 @@ class VoiceIntegrityApi {
       );
     final streamed = await request.send().timeout(const Duration(minutes: 3));
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+      final errorBody =
+          await streamed.stream.bytesToString().catchError((_) => '');
+      try {
+        final decoded = jsonDecode(errorBody);
+        if (decoded is Map && decoded.containsKey('error')) {
+          throw VoiceIntegrityApiException('Backend error: ${decoded['error']}');
+        }
+        if (decoded is Map && decoded.containsKey('detail')) {
+          throw VoiceIntegrityApiException('Backend error: ${decoded['detail']}');
+        }
+      } catch (e) {
+        if (e is VoiceIntegrityApiException) rethrow;
+      }
       throw VoiceIntegrityApiException(
         'Audio analysis returned HTTP ${streamed.statusCode}.',
       );
     }
     final body = await streamed.stream.bytesToString();
     final events = _decodeSse(body);
+    final errorEvent = events
+        .where((event) => event['event'] == 'error')
+        .cast<Map<String, dynamic>>()
+        .firstOrNull;
+    if (errorEvent != null) {
+      final detail = errorEvent['detail'] ?? 'Backend analysis error';
+      throw VoiceIntegrityApiException('Backend error: $detail');
+    }
     final windowEvents = events
         .where((event) => event['event'] == 'window_scored')
         .toList();
