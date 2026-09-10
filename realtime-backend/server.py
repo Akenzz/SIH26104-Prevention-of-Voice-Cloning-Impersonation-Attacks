@@ -217,6 +217,10 @@ def health() -> JSONResponse:
 @app.post("/predict-file")
 async def predict_file(file: UploadFile = File(...)):
     """Convenience endpoint for manual testing (entire file, multi-window, with smoothing)."""
+    import torch
+    import torchaudio
+    import torchaudio.transforms as T
+
     try:
         contents = await file.read()
         audio, sr = sf.read(io.BytesIO(contents), dtype="float32")
@@ -224,47 +228,53 @@ async def predict_file(file: UploadFile = File(...)):
         logger.warning(f"Failed to load uploaded file: {e}")
         return JSONResponse({"error": "Failed to decode audio"}, status_code=400)
 
-    # 1. Resample to 16kHz mono using the exact same torchaudio pipeline as evaluate_slices.py
-    import torch
-    import torchaudio
-    import torchaudio.transforms as T
-    
-    # sf.read returns [frames, channels], to_mono makes it [frames]
-    channels = 1 if audio.ndim == 1 else audio.shape[1]
-    mono = to_mono(audio, channels)
-    
-    # Convert to torch tensor [1, frames] to match offline pipeline
-    audio_tensor = torch.from_numpy(mono).unsqueeze(0)
-    if sr != settings.target_sample_rate:
-        audio_tensor = T.Resample(sr, settings.target_sample_rate)(audio_tensor)
+    try:
+        # 1. Resample to 16kHz mono using the exact same torchaudio pipeline as evaluate_slices.py
+        # sf.read returns [frames, channels], to_mono makes it [frames]
+        channels = 1 if audio.ndim == 1 else audio.shape[1]
+        mono = to_mono(audio, channels)
         
-    resampled = audio_tensor.squeeze(0).numpy()
+        # Convert to torch tensor [1, frames] to match offline pipeline
+        audio_tensor = torch.from_numpy(mono).unsqueeze(0)
+        if sr != settings.target_sample_rate:
+            audio_tensor = T.Resample(sr, settings.target_sample_rate)(audio_tensor)
+            
+        resampled = audio_tensor.squeeze(0).numpy()
 
-    # 2. Extract ALL windows
-    window_samples = settings.window_samples
-    hop_samples = settings.hop_samples
-    
-    if len(resampled) < window_samples:
-        resampled = np.pad(resampled, (0, window_samples - len(resampled)))
+        # 2. Extract ALL windows
+        window_samples = settings.window_samples
+        hop_samples = settings.hop_samples
         
-    buffer = RingBuffer(window_samples, hop_samples)
-    windows = buffer.push(resampled)
+        if len(resampled) < window_samples:
+            resampled = np.pad(resampled, (0, window_samples - len(resampled)))
+            
+        buffer = RingBuffer(window_samples, hop_samples)
+        windows = buffer.push(resampled)
+    except Exception as e:
+        logger.exception("Failed to preprocess audio: %s", e)
+        return JSONResponse({"error": f"Audio preprocessing failed: {e}"}, status_code=500)
+
+    # Capture the set of canonical expert names before the generator runs so
+    # alias keys injected by pipeline.py (e.g. "hybrid" for "hybrid_maxbr")
+    # don't cause KeyError when used as dict keys in expert_logits.
+    canonical_expert_names = set(experts.keys())
     
     async def event_generator():
         try:
-            # Trackers in LOGIT space (cumulative mean for batch processing)
-            expert_logits = {name: [] for name in experts}
-            if "hybrid_maxbr" in experts and "hybrid" not in expert_logits:
-                expert_logits["hybrid"] = []
-            elif "hybrid" in experts and "hybrid_maxbr" not in expert_logits:
-                expert_logits["hybrid_maxbr"] = []
+            # Trackers in LOGIT space (cumulative mean for batch processing).
+            # Initialise with canonical names AND known aliases so that
+            # pipeline.py's alias injection never causes a KeyError.
+            expert_logits: dict[str, list[float]] = {name: [] for name in canonical_expert_names}
+            if "hybrid_maxbr" in canonical_expert_names:
+                expert_logits.setdefault("hybrid", [])
+            if "hybrid" in canonical_expert_names:
+                expert_logits.setdefault("hybrid_maxbr", [])
             
-            results = []
-            spoof_windows = []
+            results: list[dict] = []
+            spoof_windows: list[int] = []
             valid_windows_scored = 0
             skipped_windows = 0
             
-            # We will track final summary state here
             for i, window in enumerate(windows):
                 window_index = i + 1
                 start_time_sec = i * settings.hop_sec
@@ -296,8 +306,6 @@ async def predict_file(file: UploadFile = File(...)):
                 state, flag = result.risk_state, result.audio_quality
                 scores, quality = result.scores, result.quality
                 
-                # If quality fails, we still process? Wait, evaluate_slices doesn't do quality checks.
-                # We'll trust process_single_window's quality check
                 if not quality.ok:
                     yield f"data: {json.dumps({'event': 'quality_fail', 'window_index': window_index, 'reason': quality.reason})}\n\n"
                     continue
@@ -310,13 +318,13 @@ async def predict_file(file: UploadFile = File(...)):
                         expert_logits[name] = []
                     raw_logit = float(score_data["logit"])
                     expert_logits[name].append(raw_logit)
-                    # For file batch analysis, we use cumulative mean to match offline evaluation exactly
                     smoothed_logit = sum(expert_logits[name]) / len(expert_logits[name])
                     
                     smoothed_expert_logits[name] = smoothed_logit
                     cal = expert_calibrators.get(name, calibrator)
                     smoothed_expert_probs[name] = float(cal.probability(smoothed_logit))
                     
+                # Ensure both hybrid aliases are available
                 if "hybrid_maxbr" in smoothed_expert_probs and "hybrid" not in smoothed_expert_probs:
                     smoothed_expert_probs["hybrid"] = smoothed_expert_probs["hybrid_maxbr"]
                 elif "hybrid" in smoothed_expert_probs and "hybrid_maxbr" not in smoothed_expert_probs:
@@ -356,6 +364,16 @@ async def predict_file(file: UploadFile = File(...)):
                 if probability > 0.5:
                     spoof_windows.append(window_index)
                     
+                # Only include canonical expert keys in the payload to avoid
+                # confusing the frontend with alias duplicates.
+                raw_scores_payload = {}
+                prob_payload = {}
+                for name in canonical_expert_names:
+                    if name in scores:
+                        raw_scores_payload[name] = float(scores[name]["logit"])
+                    if name in smoothed_expert_probs:
+                        prob_payload[name] = smoothed_expert_probs[name]
+
                 window_payload = {
                     "event": "window_scored",
                     "window_index": window_index,
@@ -364,8 +382,8 @@ async def predict_file(file: UploadFile = File(...)):
                     "calibrated_probability": probability,
                     "weighted_probability": probability,
                     "heuristic_avg_probability": probability,
-                    "raw_per_expert_scores": {k: float(v["logit"]) for k, v in scores.items()},
-                    "per_expert_probability": smoothed_expert_probs,
+                    "raw_per_expert_scores": raw_scores_payload,
+                    "per_expert_probability": prob_payload,
                 }
                 results.append(window_payload)
                 yield f"data: {json.dumps(window_payload)}\n\n"
@@ -391,14 +409,15 @@ async def predict_file(file: UploadFile = File(...)):
                 summary["total_windows_count"] = len(windows)
                 summary["skipped_windows_count"] = skipped_windows
                 summary["decision_expert"] = settings.single_expert
+                expert_summary = summary.get("experts", {})
                 summary["experts"] = [
                     {
                         "name": name,
                         "label": EXPERT_LABELS.get(name, name),
-                        "probability": summary["experts"][name]["probability"],
-                        "risk_state": summary["experts"][name]["risk_state"],
+                        "probability": expert_summary.get(name, {}).get("probability"),
+                        "risk_state": expert_summary.get(name, {}).get("risk_state", "unavailable"),
                     }
-                    for name in experts
+                    for name in canonical_expert_names
                 ]
             yield f"data: {json.dumps(summary)}\n\n"
         except Exception as exc:
