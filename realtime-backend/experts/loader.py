@@ -18,9 +18,8 @@ _BAND_GATED_LFCC = {"hybrid_maxbr"}
 def load_experts(settings: Settings) -> dict[str, Expert]:
     """Instantiate experts named in settings.experts.
 
-    Active expert lineup (3 experts):
-      wavlm         WavLM Base+ v5   (Akenzz/SIH-Models :: wavlm_best_model_v5.pt)
-      ssl           TakHemlata SSL   (Akenzz/SIH-Models :: best_SSL_model_LA.pth)
+    Active expert lineup (2 experts):
+      wavlm         WavLM Base+ v6   (Akenzz/SIH-Models :: best_model_v6.pt)
       hybrid_maxbr  LFCC-LCNN Max    (sarosh22/Final_LFCC :: hybrid_maxbr_best.pth)
                     -- trained on 84k chunks / 132 generators; applies 7 kHz parity
                        band gate; current decision expert.
@@ -41,14 +40,6 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
 
             loaded[key] = WavLMExpert(cache_dir=settings.model_cache_dir, device=settings.device)
             continue
-        if key == "ssl":
-            # The merge left this calling SSLExpert() with no args, but its
-            # __init__ requires cache_dir -> TypeError at startup. Pass the same
-            # cache_dir/device every other expert gets.
-            from .ssl_antispoof import SSLExpert
-
-            loaded[key] = SSLExpert(cache_dir=settings.model_cache_dir, device=settings.device)
-            continue
 
         if key == "hybrid":
             # Alias legacy 'hybrid' name to the current decision expert 'hybrid_maxbr'
@@ -66,7 +57,7 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
             )
             continue
         raise ValueError(
-            f"Unknown expert {name!r}. Known: dummy, wavlm, ssl, hybrid, "
+            f"Unknown expert {name!r}. Known: dummy, wavlm, hybrid, "
             f"{', '.join(sorted(_BAND_GATED_LFCC))}"
         )
     if not loaded:

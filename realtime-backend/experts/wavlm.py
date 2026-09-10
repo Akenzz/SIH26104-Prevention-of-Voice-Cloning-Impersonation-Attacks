@@ -42,7 +42,7 @@ _LOCAL_CHECKPOINT = (
     Path(__file__).resolve().parent.parent.parent   # repo root
     / "wavlm-base-plus"
     / "checkpoints"
-    / "best_model_v5.pt"
+    / "best_model_v6.pt"
 )
 
 
@@ -71,15 +71,8 @@ def _resolve_wavlm_checkpoint(cache_dir: Path) -> Path:
     spec = HUB_EXPERTS["wavlm"]
     local_path = _LOCAL_CHECKPOINT
     if local_path.exists() and local_path.stat().st_size > 0:
-        if not _remote_checkpoint_is_stale(spec["repo_id"], spec["filename"], local_path):
-            logger.info("WavLM: using LOCAL checkpoint: %s", local_path)
-            return local_path
-        logger.info(
-            "WavLM: local checkpoint is stale at %s — redownloading from Hub (%s/%s).",
-            local_path,
-            spec["repo_id"],
-            spec["filename"],
-        )
+        logger.info("WavLM: using LOCAL checkpoint: %s", local_path)
+        return local_path
     else:
         logger.info(
             "WavLM: local checkpoint not found at %s — downloading from Hub.",
@@ -151,6 +144,7 @@ class WavLMExpert:
             saved_epoch    = self._blob.get("epoch", "?")
             saved_dev_loss = self._blob.get("dev_loss", float("nan"))
             saved_dev_acc  = self._blob.get("dev_acc",  float("nan"))
+            self.band_gate_hz = self._blob.get("band_gate_hz", None)
         else:
             state = self._blob
             saved_epoch = saved_dev_loss = saved_dev_acc = "?"
@@ -202,6 +196,14 @@ class WavLMExpert:
             window = window[:_WINDOW_SAMPLES]
 
         tensor = torch.from_numpy(window).to(self.device).unsqueeze(0)  # (1, N)
+
+        if getattr(self, "band_gate_hz", None):
+            import torchaudio.functional as F_audio
+            tensor = F_audio.lowpass_biquad(
+                tensor,
+                sample_rate=TARGET_SAMPLE_RATE,
+                cutoff_freq=float(self.band_gate_hz),
+            )
 
         use_amp = self.device.type == "cuda"
         with torch.no_grad(), torch.autocast(device_type=self.device.type, enabled=use_amp):

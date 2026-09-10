@@ -68,8 +68,27 @@ class SpeechDataset(Dataset):
             split = "test"
         elif split == "val":
             split = "dev"
-        self.data = df[df["split"] == split].reset_index(drop=True)
+        subset = df[df["split"] == split].reset_index(drop=True)
+
+        if split == "train":
+            bonafide_df = subset[subset["label"] == "bonafide"]
+            spoof_df = subset[subset["label"] == "spoof"]
+            
+            if "generator" in spoof_df.columns:
+                def sample_logic(x):
+                    if len(x) < 200:
+                        return pd.DataFrame(columns=x.columns)
+                    else:
+                        return x.sample(n=min(len(x), 500), random_state=42)
+                
+                spoof_sampled = spoof_df.groupby("generator", group_keys=False).apply(sample_logic)
+                subset = pd.concat([bonafide_df, spoof_sampled]).sample(frac=1, random_state=42).reset_index(drop=True)
+
+        self.data = subset
+        # Fix paths D -> D1 due to external drive mounting changes
+        self.data["path"] = self.data["path"].str.replace("/media/akenzz/D/", "/media/akenzz/D1/", regex=False)
         self.window_samples = window_samples
+        self.split = split
 
         if len(self.data) == 0:
             raise ValueError(

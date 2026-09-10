@@ -53,8 +53,8 @@ HUB_EXPERTS = {
     # Expert 1 (Person A): WavLM Base+ front-end + classifier head.
     "wavlm": {
         "repo_id": "Akenzz/SIH-Models",
-        "filename": "wavlm_best_model_v5.pt",
-        "local_name": "wavlm_best_model_v5.pt",
+        "filename": "best_model_v6.pt",
+        "local_name": "best_model_v6.pt",
     },
     # Expert 2: LFCC-LCNN Hybrid, warm-start fine-tuned 5 epochs on the corpus +
     # 12 modern-engine clips. Uploaded to sarosh22/Hybrid_new on HF; ensure_checkpoint
@@ -63,12 +63,6 @@ HUB_EXPERTS = {
         "repo_id": "sarosh22/Hybrid_new",
         "filename": "hybrid_clean_plus_newclips_final.pth",
         "local_name": "hybrid_clean_plus_newclips_final.pth",
-    },
-    # Expert 3: TakHemlata SSL
-    "ssl": {
-        "repo_id": "Akenzz/SIH-Models",
-        "filename": "best_SSL_model_LA.pth",
-        "local_name": "best_SSL_model_LA.pth",
     },
     # Expert 2c: the bandwidth-robust retrain. Same architecture and data as
     # hybrid_nc, but trained with a 7 kHz parity band gate on BOTH classes and
@@ -110,9 +104,9 @@ HUB_EXPERTS = {
 # Human-facing labels for the frontend, so the UI never has to hardcode names.
 # ASCII only — these are echoed straight into JSON.
 EXPERT_LABELS = {
-    "wavlm":       "Expert-1: WavLM Base+ (v5)",
+    "wavlm":       "Expert-1: WavLM Base+ (v6)",
     "hybrid":      "Expert-2: LFCC-LCNN Hybrid",
-    "hybrid_maxbr": "Expert-2: LFCC-LCNN Max (132 generators, bandwidth-robust)",
+    "hybrid_maxbr": "Expert-3: LFCC-LCNN Max (132 generators, bandwidth-robust)",
 }
 
 # Per-expert Platt calibrators. Each expert's logits live on their own scale, so
@@ -122,7 +116,6 @@ EXPERT_LABELS = {
 EXPERT_CALIBRATORS = {
     "wavlm": ARTIFACTS_DIR / "platt_v5.json",
     "hybrid": ARTIFACTS_DIR / "calibrator_hybrid_newclips.json",
-    "ssl": ARTIFACTS_DIR / "platt_ssl.json",
     # hybrid_br is calibrated on GATED dev audio (lfcc-detector/fit_calibrator_br.py,
     # speaker-disjoint half/half: held-out EER 7.84%, ECE 0.061). A calibrator
     # fitted on ungated audio would map logits this model never produces in
@@ -150,12 +143,12 @@ class Settings:
     hop_sec: float = HOP_SEC
     experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid_maxbr"))
     fusion_mode: str = os.environ.get("FUSION_MODE", "heuristic_avg")
-    single_expert: str = os.environ.get("SINGLE_EXPERT", "hybrid")
+    single_expert: str = os.environ.get("SINGLE_EXPERT", "wavlm")
     ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.3"))
     device: str = os.environ.get("DEVICE", "cpu")
     fusion_path: Path = Path(os.environ.get("FUSION_PATH", str(ARTIFACTS_DIR / "fusion.json")))
     calibrator_path: Path = Path(
-        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "calibrator_hybrid_newclips.json"))
+        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "platt_v6.json"))
     )
     policy_path: Path = Path(os.environ.get("POLICY_PATH", str(ARTIFACTS_DIR / "policy.json")))
     model_cache_dir: Path = MODEL_CACHE_DIR
@@ -194,11 +187,11 @@ def load_settings() -> Settings:
         raise ValueError(f"FUSION_MODE must be one of 'single', 'fused', 'heuristic', 'heuristic_avg', 'lr_fusion', got {settings.fusion_mode!r}")
     if not settings.experts:
         raise ValueError("EXPERTS must list at least one expert")
-    unknown = [e for e in settings.experts if e not in HUB_EXPERTS and e not in {"dummy", "ssl"}]
+    unknown = [e for e in settings.experts if e not in HUB_EXPERTS and e not in {"dummy"}]
     if unknown:
         raise ValueError(
-            f"Unknown expert(s) {unknown}. Known: {', '.join(HUB_EXPERTS)}, ssl. "
-            "The older lfcc/hindi/mc_v3/prosody/hybrid/hybrid_br experts were removed."
+            f"Unknown expert(s) {unknown}. Known: {', '.join(HUB_EXPERTS)}. "
+            "The older lfcc/hindi/mc_v3/prosody/hybrid/hybrid_br/ssl experts were removed."
         )
     if settings.fusion_mode == "single":
         if not settings.single_expert:
