@@ -1,0 +1,29 @@
+{
+  "version": "platt-wavlm-20260910",
+  "kind": "platt",
+  "a": 0.8395116709025158,
+  "b": -0.5676798012858519,
+  "note": "Platt fit for expert 'wavlm' (wavlm-base-plus-ep3) on val.csv split=val; fit on 4800 windows, 1200 held out for eval (total spoof=3017, bonafide=2983). Refit if the expert, the calibration corpus, or the fusion output changes; validity depends on the fit corpus matching the deployment distribution.",
+  "metadata": {
+    "expert": "wavlm",
+    "model_version": "wavlm-base-plus-ep3",
+    "manifest": "val.csv",
+    "split": "val",
+    "balanced": false,
+    "n_windows_total": 6000,
+    "n_windows_fit": 4800,
+    "n_spoof": 3017,
+    "n_bonafide": 2983,
+    "max_windows_per_clip": 1,
+    "shuffle_seed": 0,
+    "held_out_eval": {
+      "n_eval_windows": 1200,
+      "ece": 0.01223,
+      "brier": 0.0107,
+      "log_loss": 0.03933,
+      "eer": 0.01501,
+      "ece_identity": 0.01031
+    },
+    "fitted_utc": "2026-09-10T14:28:27+00:00"
+  }
+}

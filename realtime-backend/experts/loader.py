@@ -19,7 +19,7 @@ def load_experts(settings: Settings) -> dict[str, Expert]:
     """Instantiate experts named in settings.experts.
 
     Active expert lineup (2 experts):
-      wavlm         WavLM Base+ v5   (Akenzz/SIH-Models :: wavlm_best_model_v5.pt)
+      wavlm         WavLM Base+ v6   (Akenzz/SIH-Models :: best_model_v6.pt)
       hybrid_maxbr  LFCC-LCNN Max    (sarosh22/Final_LFCC :: hybrid_maxbr_best.pth)
                     -- trained on 84k chunks / 132 generators; applies 7 kHz parity
                        band gate; current decision expert.

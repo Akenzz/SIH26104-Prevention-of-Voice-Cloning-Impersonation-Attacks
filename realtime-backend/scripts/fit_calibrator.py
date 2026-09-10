@@ -30,11 +30,13 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import random
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -220,6 +222,7 @@ def collect_scores(args) -> tuple[np.ndarray, np.ndarray, str]:
             if y is None:
                 continue
             raw_path = row.get("path", "").strip()
+            raw_path = raw_path.replace("/media/akenzz/D/", "/media/akenzz/D1/")
             if not raw_path:
                 continue
             p = Path(raw_path)
@@ -251,21 +254,21 @@ def collect_scores(args) -> tuple[np.ndarray, np.ndarray, str]:
     logits: list[float] = []
     labels: list[float] = []
     skipped = 0
-    for i, (path, y) in enumerate(rows):
+    pbar = tqdm(enumerate(rows), total=len(rows), desc="Scoring clips")
+    for i, (path, y) in pbar:
         try:
             audio, sr = sf.read(str(path), dtype="float32", always_2d=False)
         except Exception as exc:
             skipped += 1
             if skipped <= 5:
-                print(f"  skip {path.name}: {exc}")
+                tqdm.write(f"  skip {path.name}: {exc}")
             continue
         mono = to_mono(np.asarray(audio, dtype=np.float32), 1 if audio.ndim == 1 else audio.shape[1])
         resampled, _ = to_target_rate(mono, int(sr), settings.target_sample_rate)
         for w in _windows(resampled, args.max_windows_per_clip):
             logits.append(float(expert.score(w)["logit"]))
             labels.append(y)
-        if (i + 1) % 200 == 0:
-            print(f"  scored {i + 1}/{len(rows)} clips ({len(logits)} windows)")
+        pbar.set_postfix(windows=len(logits))
 
     if skipped:
         print(f"  WARNING: skipped {skipped} unreadable/missing files")

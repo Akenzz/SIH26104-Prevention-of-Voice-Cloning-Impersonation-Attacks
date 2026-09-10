@@ -53,8 +53,8 @@ HUB_EXPERTS = {
     # Expert 1 (Person A): WavLM Base+ front-end + classifier head.
     "wavlm": {
         "repo_id": "Akenzz/SIH-Models",
-        "filename": "wavlm_best_model_v5.pt",
-        "local_name": "wavlm_best_model_v5.pt",
+        "filename": "best_model_v6.pt",
+        "local_name": "best_model_v6.pt",
     },
     # Expert 2: LFCC-LCNN Hybrid, warm-start fine-tuned 5 epochs on the corpus +
     # 12 modern-engine clips. Uploaded to sarosh22/Hybrid_new on HF; ensure_checkpoint
@@ -104,9 +104,9 @@ HUB_EXPERTS = {
 # Human-facing labels for the frontend, so the UI never has to hardcode names.
 # ASCII only — these are echoed straight into JSON.
 EXPERT_LABELS = {
-    "wavlm":       "Expert-1: WavLM Base+ (v5)",
+    "wavlm":       "Expert-1: WavLM Base+ (v6)",
     "hybrid":      "Expert-2: LFCC-LCNN Hybrid",
-    "hybrid_maxbr": "Expert-2: LFCC-LCNN Max (132 generators, bandwidth-robust)",
+    "hybrid_maxbr": "Expert-3: LFCC-LCNN Max (132 generators, bandwidth-robust)",
 }
 
 # Per-expert Platt calibrators. Each expert's logits live on their own scale, so
@@ -143,12 +143,12 @@ class Settings:
     hop_sec: float = HOP_SEC
     experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid_maxbr"))
     fusion_mode: str = os.environ.get("FUSION_MODE", "heuristic_avg")
-    single_expert: str = os.environ.get("SINGLE_EXPERT", "hybrid")
+    single_expert: str = os.environ.get("SINGLE_EXPERT", "wavlm")
     ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.3"))
     device: str = os.environ.get("DEVICE", "cpu")
     fusion_path: Path = Path(os.environ.get("FUSION_PATH", str(ARTIFACTS_DIR / "fusion.json")))
     calibrator_path: Path = Path(
-        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "calibrator_hybrid_newclips.json"))
+        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "platt_v6.json"))
     )
     policy_path: Path = Path(os.environ.get("POLICY_PATH", str(ARTIFACTS_DIR / "policy.json")))
     model_cache_dir: Path = MODEL_CACHE_DIR
@@ -187,7 +187,7 @@ def load_settings() -> Settings:
         raise ValueError(f"FUSION_MODE must be one of 'single', 'fused', 'heuristic', 'heuristic_avg', 'lr_fusion', got {settings.fusion_mode!r}")
     if not settings.experts:
         raise ValueError("EXPERTS must list at least one expert")
-    unknown = [e for e in settings.experts if e not in HUB_EXPERTS and e != "dummy"]
+    unknown = [e for e in settings.experts if e not in HUB_EXPERTS and e not in {"dummy"}]
     if unknown:
         raise ValueError(
             f"Unknown expert(s) {unknown}. Known: {', '.join(HUB_EXPERTS)}. "
