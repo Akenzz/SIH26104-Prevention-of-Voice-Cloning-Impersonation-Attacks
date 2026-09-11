@@ -6,6 +6,7 @@ import { Button } from '../components/ui/Button';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { narrate, verdictLine } from '../lib/narrator';
 import { narrateRemote } from '../lib/narrateRemote';
+import { API_CONFIG } from '../config';
 import ReasoningLog from '../components/panels/ReasoningLog';
 import { buildSpoofWorkletCode, SPOOF_PROFILE_LABELS, DEFAULT_SPOOF_PROFILE } from '../lib/spoofDsp';
 
@@ -129,9 +130,8 @@ export default function LiveMonitor() {
       audioContextRef.current = audioCtx;
       const sampleRate = audioCtx.sampleRate;
 
-      // 3. Connect WebSocket via proxy
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      // 3. Connect WebSocket via env vars
+      const wsUrl = API_CONFIG.BACKEND_WS;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -157,7 +157,7 @@ export default function LiveMonitor() {
         // Ask the backend whether the optional Groq narration path is live. If
         // not (no GROQ_API_KEY), we silently use the local template narrator.
         try {
-          const h = await fetch('/health').then((r) => r.json());
+          const h = await fetch(API_CONFIG.BACKEND_URL + '/health').then((r) => r.json());
           narrationEnabledRef.current = !!h?.narration?.enabled;
         } catch {
           narrationEnabledRef.current = false;

@@ -82,7 +82,7 @@ export default function LandingPage() {
 
                 <div className="flex flex-col sm:flex-row items-center gap-5 w-full sm:w-auto">
                   <a
-                    href="/app.apk"
+                    href="https://codequantum.in/downloads/app-debug.apk"
                     download
                     className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-4 rounded-[16px] bg-[#0084FF] text-white font-medium transition-all duration-300 hover:scale-[1.02] hover:bg-[#319AFF] shadow-[0_0_30px_rgba(0,132,255,0.25)] relative overflow-hidden group"
                   >
@@ -278,7 +278,7 @@ export default function LandingPage() {
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-5 relative z-10 w-full sm:w-auto">
               <a
-                href="/app.apk"
+                href="https://codequantum.in/downloads/app-debug.apk"
                 download
                 className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-4 rounded-[16px] bg-[#0084FF] hover:bg-[#319AFF] text-white font-medium transition-all duration-300 shadow-[0_0_20px_rgba(0,132,255,0.3)] group overflow-hidden relative"
               >

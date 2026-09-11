@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { UploadCloud, FileAudio, AlertCircle, BarChart3, ChevronDown, Sliders, CheckCircle, XCircle, AlertTriangle, Activity } from 'lucide-react';
+import { API_CONFIG } from '../config';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { Badge, RiskBadge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -25,7 +26,7 @@ export default function FileAnalysis() {
   const fileInputRef = useRef(null);
 
   useEffect(() => {
-    axios.get('/health').then(r => {
+    axios.get(API_CONFIG.BACKEND_URL + '/health').then(r => {
       setHealth(r.data);
       // auto-select whatever the backend is running
       const m = r.data?.fusion_mode;
@@ -105,7 +106,7 @@ export default function FileAnalysis() {
     formData.append('file', file);
 
     try {
-      const response = await fetch('/predict-file', {
+      const response = await fetch(API_CONFIG.BACKEND_URL + '/predict-file', {
         method: 'POST',
         body: formData,
       });
