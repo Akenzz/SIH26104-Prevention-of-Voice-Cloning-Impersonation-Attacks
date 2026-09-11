@@ -53,8 +53,8 @@ HUB_EXPERTS = {
     # Expert 1 (Person A): WavLM Base+ front-end + classifier head.
     "wavlm": {
         "repo_id": "Akenzz/SIH-Models",
-        "filename": "best_model_v6.pt",
-        "local_name": "best_model_v6.pt",
+        "filename": "wavlm_maxbr_best.pt",
+        "local_name": "wavlm_maxbr_best.pt",
     },
     # Expert 2: LFCC-LCNN Hybrid, warm-start fine-tuned 5 epochs on the corpus +
     # 12 modern-engine clips. Uploaded to sarosh22/Hybrid_new on HF; ensure_checkpoint
@@ -104,7 +104,7 @@ HUB_EXPERTS = {
 # Human-facing labels for the frontend, so the UI never has to hardcode names.
 # ASCII only — these are echoed straight into JSON.
 EXPERT_LABELS = {
-    "wavlm":       "Expert-1: WavLM Base+ (v6)",
+    "wavlm":       "Expert-1: WavLM Base+ (MaxBR v6)",
     "hybrid":      "Expert-2: LFCC-LCNN Hybrid",
     "hybrid_maxbr": "Expert-3: LFCC-LCNN Max (132 generators, bandwidth-robust)",
 }

@@ -8,9 +8,9 @@ import { Spinner } from '../components/ui/Spinner';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 const FUSION_MODES = [
-  { key: 'heuristic_avg', label: 'Simple Average (2-Expert)', dataKey: 'heuristic_avg_probability', color: '#f97316' },
-  { key: 'wavlm',         label: 'WavLM v5 Only',             dataKey: 'per_expert_probability.wavlm',        color: '#3b82f6' },
-  { key: 'hybrid_maxbr',  label: 'LFCC-Max Only',             dataKey: 'per_expert_probability.hybrid_maxbr',  color: '#ec4899' },
+  { key: 'heuristic_avg', label: 'Fused (Expert-1 + Expert-2)', dataKey: 'smoothed_probability',          color: '#8b5cf6' },
+  { key: 'wavlm',         label: 'WavLM (MaxBR v6) Only',       dataKey: 'per_expert_probability.wavlm',        color: '#3b82f6' },
+  { key: 'hybrid_maxbr',  label: 'LFCC-LCNN Only',            dataKey: 'per_expert_probability.hybrid_maxbr', color: '#ec4899' },
 ];
 
 export default function FileAnalysis() {
@@ -485,7 +485,7 @@ export default function FileAnalysis() {
                     <ReferenceLine y={0.35} stroke="#10b981" strokeDasharray="3 3" opacity={0.3} />
                     <ReferenceLine y={0.65} stroke="#ef4444" strokeDasharray="3 3" opacity={0.3} />
 
-                    <Line type="monotone" dataKey="per_expert_probability.wavlm"        name="WavLM v5"    stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'wavlm'        ? 0 : 0.45} />
+                    <Line type="monotone" dataKey="per_expert_probability.wavlm"        name="WavLM (MaxBR v6)"    stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'wavlm'        ? 0 : 0.45} />
                     <Line type="monotone" dataKey="per_expert_probability.hybrid_maxbr"  name="LFCC-Max"   stroke="#ec4899" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'hybrid_maxbr' ? 0 : 0.45} />
                     <Line type="monotone" dataKey="weighted_probability"          name="Weighted Avg" stroke="#f97316" strokeWidth={1.5} strokeDasharray="4 4" dot={false} opacity={selectedMode === 'heuristic_avg' ? 0 : 0.45} />
 

@@ -59,7 +59,7 @@ export default function Dashboard() {
               <div className="mt-1 text-emerald-500"><Activity size={18}/></div>
               <div>
                 <h4 className="text-zinc-200 font-medium mb-1">Two Experts</h4>
-                <p>Expert-1 (WavLM Base+) and Expert-2 (LFCC-LCNN, 6 Indian languages) each score every window independently.</p>
+                <p>Expert-1 (WavLM MaxBR v6) and Expert-2 (LFCC-LCNN, 6 Indian languages) each score every window independently.</p>
               </div>
             </div>
             <div className="flex items-start gap-3">

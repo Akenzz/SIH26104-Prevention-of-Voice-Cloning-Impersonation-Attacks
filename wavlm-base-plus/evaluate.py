@@ -34,7 +34,7 @@ from .model import WavLMClassifier
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 MANIFEST_CSV    = "wavlm-base-plus/data/asvspoof_manifest.csv"
-CHECKPOINT_PATH = "wavlm-base-plus/checkpoints/best_model_v2.pt"
+CHECKPOINT_PATH = "wavlm-base-plus/checkpoints/wavlm_maxbr_best.pt"
 BATCH_SIZE      = 64    # no grads during eval → large batches are fine
 NUM_WORKERS     = 4     # parallel FLAC loading
 

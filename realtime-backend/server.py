@@ -56,11 +56,18 @@ def summarize_file_results(results: list[dict[str, Any]], experts: list[str], *,
             "experts": {name: {"name": name, "label": EXPERT_LABELS.get(name, name), "probability": None, "risk_state": "unavailable"} for name in experts},
         }
 
-    weighted_values = [float(r["weighted_probability"]) for r in valid]
+    # Prefer the RAW (un-smoothed) per-window probability so the file's overall
+    # verdict is independent of segment order. Fall back to the displayed weighted
+    # probability for records (e.g. older callers) that don't carry a raw value.
+    def _verdict_p(r: dict[str, Any]) -> float:
+        v = r.get("raw_probability")
+        return float(v) if v is not None else float(r["weighted_probability"])
+
+    weighted_values = [_verdict_p(r) for r in valid]
     overall_probability = float(np.mean(weighted_values))
     expert_probs: dict[str, list[float]] = {name: [] for name in experts}
     for r in valid:
-        per_expert = r.get("per_expert_probability") or {}
+        per_expert = r.get("raw_per_expert_probability") or r.get("per_expert_probability") or {}
         for name in experts:
             if name in per_expert:
                 expert_probs[name].append(float(per_expert[name]))
@@ -100,7 +107,7 @@ def summarize_file_results(results: list[dict[str, Any]], experts: list[str], *,
     else:
         confidence_level = "low"
 
-    peak_index = max(range(len(valid)), key=lambda i: float(valid[i].get("weighted_probability", 0.0)))
+    peak_index = max(range(len(valid)), key=lambda i: _verdict_p(valid[i]))
     peak_time_sec = valid[peak_index].get("start_time_sec")
 
     return {
@@ -261,7 +268,13 @@ async def predict_file(file: UploadFile = File(...)):
     
     async def event_generator():
         try:
-            # Trackers in LOGIT space (cumulative mean for batch processing).
+            # Per-expert LOGIT history for the file. The DISPLAYED per-window curve
+            # uses a bounded rolling mean over the last ~2 s of window scores (not a
+            # cumulative mean over the whole clip), so a spoof prefix stops dragging
+            # every later bonafide window down only ~1/N per step. The overall verdict
+            # is computed separately from the RAW per-window probabilities (see
+            # summarize_file_results), so it is independent of segment order
+            # (spoof-then-bonafide reads the same as bonafide-then-spoof).
             # Initialise with canonical names AND known aliases so that
             # pipeline.py's alias injection never causes a KeyError.
             expert_logits: dict[str, list[float]] = {name: [] for name in canonical_expert_names}
@@ -269,7 +282,31 @@ async def predict_file(file: UploadFile = File(...)):
                 expert_logits.setdefault("hybrid", [])
             if "hybrid" in canonical_expert_names:
                 expert_logits.setdefault("hybrid_maxbr", [])
-            
+
+            # Rolling window length measured in *window scores*: ~2 s of hops (>=1).
+            rolling_windows = max(1, round(2.0 / settings.hop_sec))
+
+            # Probability-space fusion, identical to optimize_weights.py. Applied to
+            # both the rolling (displayed) probs and the raw (verdict) probs so the
+            # two paths differ only in their smoothing, not in their fusion.
+            W_WAVLM, W_LFCC = 0.50, 0.50
+
+            def fuse_probs(prob_map: dict[str, float]) -> float:
+                p_w = prob_map.get("wavlm", 0.0)
+                p_l = prob_map.get("hybrid_maxbr", prob_map.get("hybrid", 0.0))
+                has_lfcc = "hybrid_maxbr" in prob_map or "hybrid" in prob_map
+                present = ("wavlm" in prob_map) * W_WAVLM + has_lfcc * W_LFCC
+                if present > 0:
+                    fused = float((p_w * W_WAVLM + p_l * W_LFCC) / present)
+                else:
+                    fused = float((p_w + p_l) / 2.0)
+                # Agreement override: both experts strongly agree spoof in THIS
+                # window. Computed per-window, so unlike the old cumulative path it
+                # is never "sticky" across the rest of the file.
+                if p_l > 0.85 and p_w > 0.60:
+                    fused = max(fused, 0.80)
+                return fused
+
             results: list[dict] = []
             spoof_windows: list[int] = []
             valid_windows_scored = 0
@@ -310,47 +347,35 @@ async def predict_file(file: UploadFile = File(...)):
                     yield f"data: {json.dumps({'event': 'quality_fail', 'window_index': window_index, 'reason': quality.reason})}\n\n"
                     continue
                     
-                # Logit Aggregation & Fusion
-                smoothed_expert_logits = {}
+                # Logit aggregation & fusion. For each expert we keep both:
+                #   * raw_expert_probs      -- this window's own logit (feeds the verdict)
+                #   * smoothed_expert_probs -- rolling mean of the last ~2 s (for display)
+                raw_expert_probs = {}
                 smoothed_expert_probs = {}
                 for name, score_data in scores.items():
                     if name not in expert_logits:
                         expert_logits[name] = []
                     raw_logit = float(score_data["logit"])
                     expert_logits[name].append(raw_logit)
-                    smoothed_logit = sum(expert_logits[name]) / len(expert_logits[name])
-                    
-                    smoothed_expert_logits[name] = smoothed_logit
+                    tail = expert_logits[name][-rolling_windows:]
+                    rolling_logit = sum(tail) / len(tail)
+
                     cal = expert_calibrators.get(name, calibrator)
-                    smoothed_expert_probs[name] = float(cal.probability(smoothed_logit))
-                    
-                # Ensure both hybrid aliases are available
-                if "hybrid_maxbr" in smoothed_expert_probs and "hybrid" not in smoothed_expert_probs:
-                    smoothed_expert_probs["hybrid"] = smoothed_expert_probs["hybrid_maxbr"]
-                elif "hybrid" in smoothed_expert_probs and "hybrid_maxbr" not in smoothed_expert_probs:
-                    smoothed_expert_probs["hybrid_maxbr"] = smoothed_expert_probs["hybrid"]
+                    raw_expert_probs[name] = float(cal.probability(raw_logit))
+                    smoothed_expert_probs[name] = float(cal.probability(rolling_logit))
 
-                # Probability-space fusion to match optimize_weights.py exactly
-                p_w = smoothed_expert_probs.get("wavlm", 0.0)
-                p_l = smoothed_expert_probs.get(
-                    "hybrid_maxbr", smoothed_expert_probs.get("hybrid", 0.0)
-                )
-                has_lfcc = "hybrid_maxbr" in smoothed_expert_probs or "hybrid" in smoothed_expert_probs
-                W_WAVLM, W_LFCC = 0.50, 0.50
+                # Ensure both hybrid aliases are available in each map.
+                for pm in (raw_expert_probs, smoothed_expert_probs):
+                    if "hybrid_maxbr" in pm and "hybrid" not in pm:
+                        pm["hybrid"] = pm["hybrid_maxbr"]
+                    elif "hybrid" in pm and "hybrid_maxbr" not in pm:
+                        pm["hybrid_maxbr"] = pm["hybrid"]
 
-                experts_present = (
-                    ("wavlm" in smoothed_expert_probs) * W_WAVLM +
-                    has_lfcc * W_LFCC
-                )
-                if experts_present > 0:
-                    probability = float((p_w * W_WAVLM + p_l * W_LFCC) / experts_present)
-                else:
-                    probability = float((p_w + p_l) / 2.0)
+                # Displayed per-window probability (rolling ~2 s) and the
+                # order-independent raw probability that feeds the file verdict.
+                probability = fuse_probs(smoothed_expert_probs)
+                raw_probability = fuse_probs(raw_expert_probs)
 
-                # Agreement override
-                if p_l > 0.85 and p_w > 0.60:
-                    probability = max(probability, 0.80)
-                    
                 state, action, flag = decide(
                     quality_ok=True,
                     quality_reason=None,
@@ -359,29 +384,38 @@ async def predict_file(file: UploadFile = File(...)):
                     config=policy,
                 )
                 
-                if probability > 0.5:
+                # Count spoof windows from the RAW (un-smoothed) probability so the
+                # count reflects the actual spoof segments regardless of their order.
+                if raw_probability > 0.5:
                     spoof_windows.append(window_index)
-                    
+
                 # Only include canonical expert keys in the payload to avoid
                 # confusing the frontend with alias duplicates.
                 raw_scores_payload = {}
                 prob_payload = {}
+                raw_prob_payload = {}
                 for name in canonical_expert_names:
                     if name in scores:
                         raw_scores_payload[name] = float(scores[name]["logit"])
                     if name in smoothed_expert_probs:
                         prob_payload[name] = smoothed_expert_probs[name]
+                    if name in raw_expert_probs:
+                        raw_prob_payload[name] = raw_expert_probs[name]
 
                 window_payload = {
                     "event": "window_scored",
                     "window_index": window_index,
                     "start_time_sec": start_time_sec,
                     "risk_state": state,
+                    # Displayed curve = rolling ~2 s (what the UI plots).
                     "calibrated_probability": probability,
                     "weighted_probability": probability,
                     "heuristic_avg_probability": probability,
+                    # Raw per-window values = order-independent inputs to the verdict.
+                    "raw_probability": raw_probability,
                     "raw_per_expert_scores": raw_scores_payload,
                     "per_expert_probability": prob_payload,
+                    "raw_per_expert_probability": raw_prob_payload,
                 }
                 results.append(window_payload)
                 yield f"data: {json.dumps(window_payload)}\n\n"
