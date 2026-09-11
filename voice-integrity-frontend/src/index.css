@@ -17,6 +17,9 @@
   --color-amber-500: #f59e0b;
   --color-emerald-500: #10b981;
   --color-blue-500: #3b82f6;
+
+  --font-heading: "Fustat", sans-serif;
+  --font-sans: "Inter", sans-serif;
 }
 
 @layer base {

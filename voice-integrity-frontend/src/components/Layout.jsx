@@ -2,10 +2,10 @@ import { Outlet, NavLink } from 'react-router-dom';
 import { LayoutDashboard, Radio, FileAudio, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
 
 const navItems = [
-  { path: '/', label: 'Overview', icon: LayoutDashboard },
-  { path: '/live-monitor', label: 'Live Monitor', icon: Radio },
-  { path: '/file-analysis', label: 'File Analysis', icon: FileAudio },
-  { path: '/settings', label: 'Settings', icon: SettingsIcon },
+  { path: '/platform', label: 'Overview', icon: LayoutDashboard },
+  { path: '/platform/live-monitor', label: 'Live Monitor', icon: Radio },
+  { path: '/platform/file-analysis', label: 'File Analysis', icon: FileAudio },
+  { path: '/platform/settings', label: 'Settings', icon: SettingsIcon },
 ];
 
 export default function Layout() {
@@ -25,6 +25,7 @@ export default function Layout() {
             <NavLink
               key={item.path}
               to={item.path}
+              end={item.path === '/platform'}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${
                   isActive
@@ -53,6 +54,7 @@ export default function Layout() {
           <NavLink
             key={item.path}
             to={item.path}
+            end={item.path === '/platform'}
             className={({ isActive }) =>
               `flex flex-col items-center gap-1 p-2 rounded-lg text-xs font-medium transition-colors ${
                 isActive

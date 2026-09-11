@@ -8,7 +8,7 @@ import { Spinner } from '../components/ui/Spinner';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 const FUSION_MODES = [
-  { key: 'heuristic_avg', label: 'Fused (Expert-1 + Expert-2)', dataKey: 'smoothed_probability',          color: '#8b5cf6' },
+  { key: 'heuristic_avg', label: 'Fused (Expert-1 + Expert-2)', dataKey: 'weighted_probability',          color: '#8b5cf6' },
   { key: 'wavlm',         label: 'WavLM (MaxBR v6) Only',       dataKey: 'per_expert_probability.wavlm',        color: '#3b82f6' },
   { key: 'hybrid_maxbr',  label: 'LFCC-LCNN Only',            dataKey: 'per_expert_probability.hybrid_maxbr', color: '#ec4899' },
 ];
