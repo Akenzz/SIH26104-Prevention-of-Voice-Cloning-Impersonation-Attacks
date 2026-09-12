@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { API_CONFIG } from '../config';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Spinner } from '../components/ui/Spinner';
@@ -13,7 +14,7 @@ export default function Settings() {
   useEffect(() => {
     const fetchHealth = async () => {
       try {
-        const res = await axios.get('/health');
+        const res = await axios.get(API_CONFIG.BACKEND_URL + '/health');
         setHealth(res.data);
         setError(null);
       } catch (err) {

@@ -16,7 +16,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Link to="/live-monitor" className="block group">
+        <Link to="/platform/live-monitor" className="block group">
           <Card className="h-full transition-colors group-hover:border-zinc-700 group-hover:bg-zinc-800/20">
             <CardContent className="p-6 md:p-8 flex flex-col items-center text-center gap-4">
               <div className="h-12 w-12 md:h-16 md:w-16 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-300 group-hover:text-zinc-100 transition-colors">
@@ -25,7 +25,7 @@ export default function Dashboard() {
               <div>
                 <h2 className="text-lg md:text-xl font-semibold text-zinc-100 mb-2">Live Monitor</h2>
                 <p className="text-zinc-400 text-sm md:text-base">
-                  Connect to the real-time WebSocket stream to analyze microphone audio continuously. 
+                  Connect to the real-time WebSocket stream to analyze microphone audio continuously.
                   Ideal for live call center integrations and real-time alerts.
                 </p>
               </div>
@@ -33,7 +33,7 @@ export default function Dashboard() {
           </Card>
         </Link>
 
-        <Link to="/file-analysis" className="block group">
+        <Link to="/platform/file-analysis" className="block group">
           <Card className="h-full transition-colors group-hover:border-zinc-700 group-hover:bg-zinc-800/20">
             <CardContent className="p-6 md:p-8 flex flex-col items-center text-center gap-4">
               <div className="h-12 w-12 md:h-16 md:w-16 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-300 group-hover:text-zinc-100 transition-colors">
@@ -56,21 +56,21 @@ export default function Dashboard() {
           <CardHeader title="System Architecture" />
           <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm text-zinc-400">
             <div className="flex items-start gap-3">
-              <div className="mt-1 text-emerald-500"><Activity size={18}/></div>
+              <div className="mt-1 text-emerald-500"><Activity size={18} /></div>
               <div>
                 <h4 className="text-zinc-200 font-medium mb-1">Two Experts</h4>
                 <p>Expert-1 (WavLM MaxBR v6) and Expert-2 (LFCC-LCNN, 6 Indian languages) each score every window independently.</p>
               </div>
             </div>
             <div className="flex items-start gap-3">
-              <div className="mt-1 text-emerald-500"><Activity size={18}/></div>
+              <div className="mt-1 text-emerald-500"><Activity size={18} /></div>
               <div>
                 <h4 className="text-zinc-200 font-medium mb-1">Per-Expert Calibration</h4>
                 <p>Each model has its own Platt fit, so its logits become a probability on its own scale. The risk band comes from the configured decision expert.</p>
               </div>
             </div>
             <div className="flex items-start gap-3">
-              <div className="mt-1 text-emerald-500"><Activity size={18}/></div>
+              <div className="mt-1 text-emerald-500"><Activity size={18} /></div>
               <div>
                 <h4 className="text-zinc-200 font-medium mb-1">Low Latency</h4>
                 <p>Optimized 4.0s windowing with 0.5s hop size ensures rapid real-time updates.</p>

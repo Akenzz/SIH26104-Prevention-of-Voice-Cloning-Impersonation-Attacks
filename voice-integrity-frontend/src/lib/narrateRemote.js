@@ -1,5 +1,6 @@
 // Task F — remote (LLM) narration path. Streams a one-line rephrasing of one
 // window's numbers from the backend /narrate SSE endpoint, calling `onToken`
+import { API_CONFIG } from '../config';
 // with the accumulated text so far on each delta. Resolves with the final text.
 //
 // Throws on any non-OK response (e.g. 503 when no GROQ_API_KEY), a missing body,
@@ -11,7 +12,7 @@ export async function narrateRemote(fields, onToken, { timeoutMs = 12000 } = {})
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch("/narrate", {
+    const res = await fetch(API_CONFIG.BACKEND_URL + "/narrate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fields),

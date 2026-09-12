@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { UploadCloud, FileAudio, AlertCircle, BarChart3, ChevronDown, Sliders, CheckCircle, XCircle, AlertTriangle, Activity } from 'lucide-react';
+import { API_CONFIG } from '../config';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { Badge, RiskBadge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -8,7 +9,7 @@ import { Spinner } from '../components/ui/Spinner';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 const FUSION_MODES = [
-  { key: 'heuristic_avg', label: 'Fused (Expert-1 + Expert-2)', dataKey: 'smoothed_probability',          color: '#8b5cf6' },
+  { key: 'heuristic_avg', label: 'Fused (Expert-1 + Expert-2)', dataKey: 'weighted_probability',          color: '#8b5cf6' },
   { key: 'wavlm',         label: 'WavLM (MaxBR v6) Only',       dataKey: 'per_expert_probability.wavlm',        color: '#3b82f6' },
   { key: 'hybrid_maxbr',  label: 'LFCC-LCNN Only',            dataKey: 'per_expert_probability.hybrid_maxbr', color: '#ec4899' },
 ];
@@ -25,7 +26,7 @@ export default function FileAnalysis() {
   const fileInputRef = useRef(null);
 
   useEffect(() => {
-    axios.get('/health').then(r => {
+    axios.get(API_CONFIG.BACKEND_URL + '/health').then(r => {
       setHealth(r.data);
       // auto-select whatever the backend is running
       const m = r.data?.fusion_mode;
@@ -105,7 +106,7 @@ export default function FileAnalysis() {
     formData.append('file', file);
 
     try {
-      const response = await fetch('/predict-file', {
+      const response = await fetch(API_CONFIG.BACKEND_URL + '/predict-file', {
         method: 'POST',
         body: formData,
       });
