@@ -401,7 +401,7 @@ def main() -> int:
             "n_spoof":              n_pos,
             "n_bonafide":           n_neg,
             "max_windows_per_clip": args.max_windows_per_clip,
-            "band_gate_hz":         getattr(expert, "band_gate_hz", 7000),
+            "band_gate_hz":         None,
             "shuffle_seed":         args.seed,
             "held_out_eval":        ev_metrics,
             "fitted_utc":           datetime.now(timezone.utc).isoformat(timespec="seconds"),
