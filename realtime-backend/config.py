@@ -52,9 +52,9 @@ HOP_SEC = float(os.environ.get("HOP_SEC", "0.5"))
 HUB_EXPERTS = {
     # Expert 1 (Person A): WavLM Base+ front-end + classifier head.
     "wavlm": {
-        "repo_id": "Akenzz/SIH-Models",
-        "filename": "best_model_v6.pt",
-        "local_name": "best_model_v6.pt",
+        "repo_id": "sarosh22/wavLM-Hybrid",
+        "filename": "wavlm_maxbr_best.pt",
+        "local_name": "wavlm_maxbr_best.pt",
     },
     # Expert 2: LFCC-LCNN Hybrid, warm-start fine-tuned 5 epochs on the corpus +
     # 12 modern-engine clips. Uploaded to sarosh22/Hybrid_new on HF; ensure_checkpoint
