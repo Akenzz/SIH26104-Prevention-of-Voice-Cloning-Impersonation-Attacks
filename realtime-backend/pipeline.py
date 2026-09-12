@@ -81,6 +81,11 @@ def process_single_window(
     if dropped_frames:
         quality = QualityResult(False, "dropped_or_reordered")
 
+    if quality.ok:
+        from audio.vad import has_speech
+        if not has_speech(window, settings.target_sample_rate):
+            quality = QualityResult(False, "silence")
+
     if not quality.ok:
         state, action, flag = decide(
             quality_ok=False,
@@ -148,35 +153,30 @@ def process_single_window(
         scores["hybrid_maxbr"] = scores["hybrid"]
 
     if settings.fusion_mode == "heuristic_avg":
-        l_w = float(scores["wavlm"]["logit"]) if "wavlm" in scores else 0.0
-        lfcc_key = (
-            "hybrid_maxbr"
-            if "hybrid_maxbr" in scores
-            else ("hybrid" if "hybrid" in scores else None)
-        )
-        l_l = float(scores[lfcc_key]["logit"]) if lfcc_key else 0.0
-
-        # 2-expert lineup: 50% WavLM + 50% LFCC-LCNN (TakHemlata SSL decommissioned)
-        W_WAVLM, W_LFCC = 0.50, 0.50
-        experts_present = (
-            ("wavlm" in scores) * W_WAVLM +
-            (lfcc_key is not None) * W_LFCC
-        )
-        if experts_present > 0:
-            fused = float((l_w * W_WAVLM + l_l * W_LFCC) / experts_present)
-        else:
-            fused = float((l_w + l_l) / 2.0)
-
-        # Calculate final probability from the fused logit
-        probability = float(calibrator.probability(fused))
-
-        # Strong-agreement override: if LFCC is very confident (>85%) AND
-        # WavLM also agrees (>60%), force spoof verdict. Rescues cases where
-        # WavLM is neutral but LFCC is screaming spoof.
         p_w = expert_probabilities.get("wavlm", 0.0)
         p_l = expert_probabilities.get(
             "hybrid_maxbr", expert_probabilities.get("hybrid", 0.0)
         )
+
+        # 2-expert lineup: 50% WavLM + 50% LFCC-LCNN (TakHemlata SSL decommissioned)
+        W_WAVLM, W_LFCC = 0.50, 0.50
+        has_w = "wavlm" in scores
+        has_l = "hybrid" in scores
+        
+        experts_present = (W_WAVLM if has_w else 0.0) + (W_LFCC if has_l else 0.0)
+        
+        if experts_present > 0:
+            probability = float((p_w * (W_WAVLM if has_w else 0.0) + p_l * (W_LFCC if has_l else 0.0)) / experts_present)
+        else:
+            probability = float((p_w + p_l) / 2.0)
+            
+        import math
+        p_clip = max(1e-7, min(1.0 - 1e-7, probability))
+        fused = float(math.log(p_clip / (1.0 - p_clip)))
+
+        # Strong-agreement override: if LFCC is very confident (>85%) AND
+        # WavLM also agrees (>60%), force spoof verdict. Rescues cases where
+        # WavLM is neutral but LFCC is screaming spoof.
         if p_l > 0.85 and p_w > 0.60:
             probability = max(probability, 0.80)
 
