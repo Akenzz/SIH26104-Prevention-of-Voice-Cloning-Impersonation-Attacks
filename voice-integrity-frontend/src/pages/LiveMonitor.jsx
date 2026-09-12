@@ -103,10 +103,16 @@ export default function LiveMonitor() {
   const recordedChunksRef = useRef([]);
   const recordSampleRateRef = useRef(48000);
   const sessionUsedSpoofRef = useRef(false);
+  // Detector's peak call over the session — tracked separately from
+  // sessionUsedSpoofRef so the playback card can show what the model actually
+  // concluded (the verdict) next to whether the operator ran the voice-changer
+  // (provenance). prob === -1 means no window was ever scored.
+  const sessionPeakRef = useRef({ prob: -1, state: null });
   const recordingUrlRef = useRef(null);
   const mountedRef = useRef(true);
   const [recordingUrl, setRecordingUrl] = useState(null);
   const [recordingSpoofed, setRecordingSpoofed] = useState(false);
+  const [recordingVerdict, setRecordingVerdict] = useState(null);
 
   // Swap in a new playback URL, revoking the previous Blob so nothing lingers.
   const setRecordingUrlSafe = useCallback((url) => {
@@ -120,8 +126,26 @@ export default function LiveMonitor() {
       setError(null);
       setStatus('connecting');
 
-      // 1. Get Microphone
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true } });
+      // 1. Get Microphone — capture the RAWEST possible signal.
+      // The detectors were trained on clean corpus PCM with no browser DSP in
+      // the path. Chrome defaults echoCancellation / noiseSuppression /
+      // autoGainControl to TRUE on a getUserMedia audio track, so leaving them
+      // on inserts three processing stages the model never saw in training.
+      // echoCancellation is the worst offender for the judge demo: its whole
+      // job is to CANCEL audio coming from the speakers, so an AI/cloned clip
+      // played near the mic gets partially suppressed — the very thing we want
+      // the detector to hear. All three OFF keeps live capture closest to the
+      // training distribution. (If a room is genuinely noisy you can flip these
+      // back on to compare; play the source at a healthy volume so the window
+      // never drops below the silence gate.)
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
       mediaStreamRef.current = stream;
 
       // 2. Setup AudioContext (we'll let it pick the default device rate, backend will resample)
@@ -151,7 +175,9 @@ export default function LiveMonitor() {
         recordedChunksRef.current = [];
         recordSampleRateRef.current = sampleRate;
         sessionUsedSpoofRef.current = false;
+        sessionPeakRef.current = { prob: -1, state: null };
         setRecordingSpoofed(false);
+        setRecordingVerdict(null);
         setRecordingUrlSafe(null);
 
         // Ask the backend whether the optional Groq narration path is live. If
@@ -284,6 +310,15 @@ export default function LiveMonitor() {
           setCurrentProb(data.smoothed_probability);
           setLatestData(data);
 
+          // Remember the detector's peak call this session, so the playback card
+          // can report what the model actually decided — independent of whether
+          // the operator turned the voice-changer on. Only finite scores count
+          // ("collecting"/quality-gated windows carry no probability).
+          const peakP = data.smoothed_probability;
+          if (typeof peakP === 'number' && Number.isFinite(peakP) && peakP > sessionPeakRef.current.prob) {
+            sessionPeakRef.current = { prob: peakP, state: data.risk_state };
+          }
+
           // Task F: narrate the change, if any. The local narrator is both the
           // event gate AND the offline fallback; the LLM only rephrases the same
           // grounded fields when enabled, so it adds no new hallucination surface.
@@ -384,6 +419,9 @@ export default function LiveMonitor() {
         const blob = encodeWavFromFloat32(pcm, recordSampleRateRef.current);
         setRecordingUrlSafe(URL.createObjectURL(blob));
         setRecordingSpoofed(sessionUsedSpoofRef.current);
+        // Freeze the detector's peak call for the playback card (null if no
+        // window was ever scored — e.g. the session was all silence).
+        setRecordingVerdict(sessionPeakRef.current.prob >= 0 ? { ...sessionPeakRef.current } : null);
       }
     }
 
@@ -411,8 +449,9 @@ export default function LiveMonitor() {
     const next = !spoofEnabledRef.current;
     spoofEnabledRef.current = next;
     setSpoofEnabled(next);
-    // Remember that this session's audio was warped, so the playback can be
-    // labelled honestly ("includes spoofed voice") once monitoring stops.
+    // Remember that this session's audio was warped, so the playback card can
+    // show the provenance ("Voice-changer was on") alongside — but distinct
+    // from — the detector's own peak verdict once monitoring stops.
     if (next) sessionUsedSpoofRef.current = true;
 
     const node = workletNodeRef.current;
@@ -674,28 +713,48 @@ export default function LiveMonitor() {
       </div>
 
       {!isRecording && recordingUrl && (
-        <Card className={recordingSpoofed ? 'border-red-500/30' : 'border-emerald-500/20'}>
+        <Card className={
+          recordingVerdict?.state === 'high' ? 'border-red-500/30'
+          : recordingVerdict?.state === 'uncertain' ? 'border-amber-500/30'
+          : recordingVerdict?.state === 'low' ? 'border-emerald-500/20'
+          : 'border-zinc-800'
+        }>
           <CardHeader
             title="Session Playback"
             description="Exactly the audio the detector analyzed this session. Kept in memory only — it clears the moment you start the next session, and nothing is saved to disk."
           />
           <CardContent className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Provenance — what the OPERATOR did to the audio. This is NOT a
+                  detector verdict; the voice-changer being on says nothing about
+                  what the model concluded. */}
               {recordingSpoofed ? (
-                <span className="text-[10px] uppercase font-bold tracking-wider bg-red-500/10 text-red-400 border border-red-500/30 px-2 py-0.5 rounded flex items-center gap-1">
-                  <Zap size={10} /> Includes spoofed voice
+                <span className="text-[10px] uppercase font-bold tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1">
+                  <Zap size={10} /> Voice-changer was on
                 </span>
               ) : (
                 <span className="text-[10px] uppercase font-bold tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1">
-                  <Mic size={10} /> Your real voice
+                  <Mic size={10} /> Real voice only
                 </span>
               )}
-              <span className="text-xs text-zinc-500">
-                {recordingSpoofed
-                  ? 'This is the warped voice the model scored — play it back to hear what the detector heard.'
-                  : 'Play it back to hear what the detector heard.'}
-              </span>
+              {/* The detector's own peak call over the session (the verdict). */}
+              {recordingVerdict ? (
+                <span className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+                  <span className="uppercase tracking-wider">Detector peak</span>
+                  <RiskBadge state={recordingVerdict.state} />
+                  <span className="tabular-nums text-zinc-300">{(recordingVerdict.prob * 100).toFixed(1)}%</span>
+                </span>
+              ) : (
+                <span className="text-[11px] text-zinc-500">No windows scored this session</span>
+              )}
             </div>
+            <p className="text-xs text-zinc-500">
+              {recordingSpoofed
+                ? (recordingVerdict && recordingVerdict.state !== 'high'
+                    ? "You ran this through the voice-changer, but the detector never reached a spoof verdict this session — a browser DSP disguise doesn't carry the neural-synthesis cues these models flag. Play it back to hear exactly what the detector scored."
+                    : "This is the warped voice the detector scored — play it back to hear what it heard.")
+                : "Play it back to hear exactly what the detector scored."}
+            </p>
             <audio
               key={recordingUrl}
               src={recordingUrl}
