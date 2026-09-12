@@ -240,8 +240,12 @@ export default function LiveMonitor() {
         };
 
         source.connect(workletNode);
-        workletNode.connect(audioCtx.destination); // Required for some browsers to keep worklet alive, but we could mute it.
-        // Actually, connecting to destination causes feedback. Better to connect to a GainNode with 0 gain.
+        // Some browsers stop scheduling an AudioWorkletNode that has no outgoing
+        // connection, which would silence process() and starve both the detector
+        // and the session recording. So we DO route the node to the destination —
+        // but only through a muted (0-gain) node, so the live-warped output is
+        // never played back through the speakers (which, with an open mic, would
+        // feed back). Playback is muxed from the captured frames, not this path.
         const gain = audioCtx.createGain();
         gain.gain.value = 0;
         workletNode.connect(gain);

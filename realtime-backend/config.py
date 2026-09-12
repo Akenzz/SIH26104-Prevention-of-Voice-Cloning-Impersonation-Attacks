@@ -52,7 +52,7 @@ HOP_SEC = float(os.environ.get("HOP_SEC", "0.5"))
 HUB_EXPERTS = {
     # Expert 1 (Person A): WavLM Base+ front-end + classifier head.
     "wavlm": {
-        "repo_id": "Akenzz/SIH-Models",
+        "repo_id": "sarosh22/wavLM-Hybrid",
         "filename": "wavlm_maxbr_best.pt",
         "local_name": "wavlm_maxbr_best.pt",
     },
