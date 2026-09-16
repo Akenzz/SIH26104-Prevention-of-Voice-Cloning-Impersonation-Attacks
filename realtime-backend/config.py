@@ -114,7 +114,7 @@ EXPERT_LABELS = {
 # still comes from SINGLE_EXPERT via CALIBRATOR_PATH; these are what let the UI
 # show a meaningful probability for BOTH models side by side.
 EXPERT_CALIBRATORS = {
-    "wavlm": ARTIFACTS_DIR / "platt_v5.json",
+    "wavlm": ARTIFACTS_DIR / "platt_v7.json",
     "hybrid": ARTIFACTS_DIR / "calibrator_hybrid_newclips.json",
     # hybrid_br is calibrated on GATED dev audio (lfcc-detector/fit_calibrator_br.py,
     # speaker-disjoint half/half: held-out EER 7.84%, ECE 0.061). A calibrator
@@ -144,15 +144,22 @@ class Settings:
     experts: list[str] = field(default_factory=lambda: _csv_env("EXPERTS", "wavlm,hybrid_maxbr"))
     fusion_mode: str = os.environ.get("FUSION_MODE", "heuristic_avg")
     single_expert: str = os.environ.get("SINGLE_EXPERT", "wavlm")
-    ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.3"))
+    # Raised from 0.3 → 0.4: faster reaction when audio transitions from real to
+    # spoof (a 0.3 alpha needs ~4 windows to reach the "high" band; 0.4 reaches
+    # it in ~3 windows, shaving ~0.5 s off the detection latency at 0.5 s/hop).
+    ema_alpha: float = float(os.environ.get("EMA_ALPHA", "0.4"))
     device: str = os.environ.get("DEVICE", "cpu")
     fusion_path: Path = Path(os.environ.get("FUSION_PATH", str(ARTIFACTS_DIR / "fusion.json")))
     calibrator_path: Path = Path(
-        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "platt_v6.json"))
+        os.environ.get("CALIBRATOR_PATH", str(ARTIFACTS_DIR / "platt_v7.json"))
     )
     policy_path: Path = Path(os.environ.get("POLICY_PATH", str(ARTIFACTS_DIR / "policy.json")))
     model_cache_dir: Path = MODEL_CACHE_DIR
     silence_rms: float = float(os.environ.get("SILENCE_RMS", "1e-4"))
+    # VAD threshold forwarded to audio/vad.py has_speech().  Lower = more
+    # permissive; 0.3 accommodates loudspeaker audio captured through a room
+    # (the default 0.5 typically rejects it as "no speech").
+    vad_threshold: float = float(os.environ.get("VAD_THRESHOLD", "0.3"))
     clip_abs: float = float(os.environ.get("CLIP_ABS", "0.99"))
     clip_fraction: float = float(os.environ.get("CLIP_FRACTION", "0.01"))
     prefetch_models: bool = os.environ.get("PREFETCH_MODELS", "0") == "1"

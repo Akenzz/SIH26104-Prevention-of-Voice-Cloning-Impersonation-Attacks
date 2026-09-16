@@ -75,6 +75,16 @@ export default function LiveMonitor() {
   const [latestData, setLatestData] = useState(null);
   const [reasoning, setReasoning] = useState([]);
 
+  // Quality-gate diagnostics: track consecutive windows rejected by the
+  // silence / clipping / VAD gate so we can show an actionable banner.
+  const [qualityGateBanner, setQualityGateBanner] = useState(null); // { reason, count }
+  const qualityDropsRef = useRef(0); // consecutive gated windows this session
+
+  // Live input level (0–1) sampled from the analyser on every animation frame.
+  // Used to drive the input-level meter below the waveform canvas.
+  const [inputLevel, setInputLevel] = useState(0);
+  const analyserRef = useRef(null);
+
   // "Talk as Teammate 3 (Spoof)" state. Refs shadow the state so the worklet
   // message handlers and the ws.onopen config send always read the live value
   // without waiting for a re-render.
@@ -170,6 +180,10 @@ export default function LiveMonitor() {
         setSpoofEnabled(false);
         spoofEnabledRef.current = false;
 
+        // Reset quality-gate diagnostics for the new session.
+        qualityDropsRef.current = 0;
+        setQualityGateBanner(null);
+
         // Start a fresh recording and drop the previous session's playback, so a
         // clip only ever lives until the next Start (in-memory only, no disk).
         recordedChunksRef.current = [];
@@ -207,6 +221,7 @@ export default function LiveMonitor() {
         // Setup visual analyser
         const analyser = audioCtx.createAnalyser();
         analyser.fftSize = 2048;
+        analyserRef.current = analyser;
         source.connect(analyser);
         
         const drawWaveform = () => {
@@ -219,6 +234,14 @@ export default function LiveMonitor() {
           const bufferLength = analyser.frequencyBinCount;
           const dataArray = new Uint8Array(bufferLength);
           analyser.getByteTimeDomainData(dataArray);
+          
+          // Compute RMS for the input-level meter (0–1).
+          let sumSq = 0;
+          for (let i = 0; i < bufferLength; i++) {
+            const v = (dataArray[i] - 128) / 128;
+            sumSq += v * v;
+          }
+          setInputLevel(Math.sqrt(sumSq / bufferLength));
           
           canvasCtx.clearRect(0, 0, width, height);
           canvasCtx.lineWidth = 2;
@@ -299,6 +322,34 @@ export default function LiveMonitor() {
             state: data.risk_state,
             expert_probs: expertProbs,
           };
+
+          // Quality-gate diagnostics: count consecutive dropped windows and
+          // show a banner after 2 consecutive drops to help operators diagnose
+          // loudspeaker-capture issues (too quiet, too loud, VAD rejection).
+          const aqReason = data.audio_quality;
+          const isGated =
+            data.risk_state === 'unavailable' ||
+            aqReason === 'silence' ||
+            aqReason === 'clipped' ||
+            aqReason === 'clipping' ||
+            (typeof data.smoothed_probability !== 'number');
+
+          if (isGated) {
+            qualityDropsRef.current += 1;
+            if (qualityDropsRef.current >= 2) {
+              const bannerReason =
+                aqReason === 'clipped' || aqReason === 'clipping'
+                  ? 'clipping'
+                  : aqReason === 'silence'
+                  ? 'silence'
+                  : 'vad';
+              setQualityGateBanner({ reason: bannerReason, count: qualityDropsRef.current });
+            }
+          } else {
+            // Scored window — reset the drop streak and clear the banner.
+            qualityDropsRef.current = 0;
+            setQualityGateBanner(null);
+          }
           
           setScores(prev => {
             const next = [...prev, newScore];
@@ -384,6 +435,8 @@ export default function LiveMonitor() {
   const stopRecording = useCallback(() => {
     setIsRecording(false);
     setLatestData(null);
+    setInputLevel(0);
+    analyserRef.current = null;
     
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -533,6 +586,52 @@ export default function LiveMonitor() {
         </Card>
       )}
 
+      {/* Quality-gate banner — shown after 2+ consecutive gated windows */}
+      {isRecording && qualityGateBanner && (() => {
+        const { reason, count } = qualityGateBanner;
+        const msgs = {
+          silence: {
+            icon: '🔇',
+            title: 'Audio too quiet — windows are being dropped',
+            body: 'The mic is not picking up the spoof audio at a usable level. ' +
+              'Try raising the loudspeaker to ≥60 % volume, moving it closer to the mic, ' +
+              'or disabling system-level mic noise suppression.',
+          },
+          clipping: {
+            icon: '📢',
+            title: 'Audio clipping — windows are being dropped',
+            body: 'The mic signal is too loud and is being clipped. ' +
+              'Lower the loudspeaker volume or increase the mic-to-speaker distance.',
+          },
+          vad: {
+            icon: '🎙️',
+            title: 'No speech detected — windows are being dropped',
+            body: 'The Voice Activity Detector does not see speech in the captured audio. ' +
+              'The spoof clip may be too quiet, muffled, or mostly silent. ' +
+              'Play a voice-heavy segment and make sure mic enhancements (echo cancellation, ' +
+              'noise suppression) are disabled in your OS sound settings.',
+          },
+        };
+        const m = msgs[reason] || msgs.vad;
+        return (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-4 py-3 flex items-start gap-3">
+            <span className="text-xl leading-none mt-0.5">{m.icon}</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-300">{m.title}</p>
+              <p className="text-xs text-amber-200/70 mt-0.5">{m.body}</p>
+              <p className="text-[10px] text-amber-500/60 mt-1">
+                {count} consecutive window{count !== 1 ? 's' : ''} dropped · models have not scored since the last valid window
+              </p>
+            </div>
+            <button
+              onClick={() => setQualityGateBanner(null)}
+              className="text-amber-500/50 hover:text-amber-400 transition-colors text-lg leading-none flex-shrink-0"
+              aria-label="Dismiss"
+            >×</button>
+          </div>
+        );
+      })()}
+
       {isRecording && (
         <Card className={spoofEnabled
           ? 'border-red-500/40 bg-red-500/[0.06] shadow-[0_0_28px_-6px_rgba(239,68,68,0.55)] transition-shadow'
@@ -611,7 +710,32 @@ export default function LiveMonitor() {
                )}
                
                <div className="mt-8 w-full">
-                 <p className="text-xs text-zinc-500 mb-2 uppercase tracking-wider">Live Audio Signal</p>
+                 <div className="flex justify-between items-center mb-1">
+                   <p className="text-xs text-zinc-500 uppercase tracking-wider">Live Audio Signal</p>
+                   {/* Input-level meter — gives immediate feedback on loudspeaker volume */}
+                   <div className="flex items-center gap-1.5">
+                     <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Level</span>
+                     <div className="w-20 h-2 rounded-full bg-zinc-800 overflow-hidden">
+                       <div
+                         className="h-full rounded-full transition-all duration-75"
+                         style={{
+                           width: `${Math.min(inputLevel * 10 * 100, 100)}%`,
+                           backgroundColor:
+                             inputLevel > 0.08 ? '#ef4444'   // clipping risk  → red
+                             : inputLevel > 0.015 ? '#10b981' // good range     → emerald
+                             : '#f59e0b',                     // too quiet       → amber
+                         }}
+                       />
+                     </div>
+                     <span className={`text-[10px] font-mono ${
+                       inputLevel > 0.08 ? 'text-red-400'
+                       : inputLevel > 0.015 ? 'text-emerald-400'
+                       : 'text-amber-400'
+                     }`}>
+                       {inputLevel > 0.08 ? 'HIGH' : inputLevel > 0.015 ? 'OK' : 'LOW'}
+                     </span>
+                   </div>
+                 </div>
                  <canvas 
                    ref={canvasRef} 
                    width={300} 
@@ -621,9 +745,24 @@ export default function LiveMonitor() {
                </div>
              </>
           ) : (
-             <div className="flex flex-col items-center gap-4 opacity-50">
-               <MicOff size={48} className="text-zinc-600" />
-               <p className="text-zinc-400 font-medium">Microphone is offline</p>
+             <div className="flex flex-col items-center gap-6 py-6 w-full">
+               <div className="flex flex-col items-center gap-3 opacity-60">
+                 <div className="h-16 w-16 bg-zinc-900 rounded-full flex items-center justify-center text-zinc-400 border border-zinc-800">
+                   <MicOff size={28} />
+                 </div>
+                 <p className="text-sm font-medium text-zinc-300">Microphone is offline</p>
+               </div>
+
+               <div className="w-full bg-zinc-900/50 border border-zinc-800/80 rounded-lg p-4 text-left space-y-2">
+                 <p className="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+                   <AlertTriangle size={12} className="text-amber-400" /> Pre-flight Setup Tips
+                 </p>
+                 <ul className="text-xs text-zinc-400 space-y-1.5 list-disc pl-4">
+                   <li>Set loudspeaker volume to <strong className="text-zinc-200">≥60%</strong></li>
+                   <li>Disable OS-level mic noise suppression & echo cancellation</li>
+                   <li>Keep speaker close to microphone for best spoof capture</li>
+                 </ul>
+               </div>
              </div>
           )}
         </Card>

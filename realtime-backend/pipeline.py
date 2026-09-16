@@ -83,7 +83,7 @@ def process_single_window(
 
     if quality.ok:
         from audio.vad import has_speech
-        if not has_speech(window, settings.target_sample_rate):
+        if not has_speech(window, settings.target_sample_rate, threshold=settings.vad_threshold):
             quality = QualityResult(False, "silence")
 
     if not quality.ok:
@@ -174,10 +174,11 @@ def process_single_window(
         p_clip = max(1e-7, min(1.0 - 1e-7, probability))
         fused = float(math.log(p_clip / (1.0 - p_clip)))
 
-        # Strong-agreement override: if LFCC is very confident (>85%) AND
+        # Strong-agreement override: if LFCC is very confident (>75%) AND
         # WavLM also agrees (>60%), force spoof verdict. Rescues cases where
-        # WavLM is neutral but LFCC is screaming spoof.
-        if p_l > 0.85 and p_w > 0.60:
+        # WavLM is neutral but LFCC is screaming spoof, including loudspeaker
+        # capture where room reverberation keeps LFCC below the old 85% mark.
+        if p_l > 0.75 and p_w > 0.60:
             probability = max(probability, 0.80)
 
 
