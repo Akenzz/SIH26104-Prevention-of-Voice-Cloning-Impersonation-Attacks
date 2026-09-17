@@ -768,7 +768,17 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 50));
 
-      // Initially both model cards appear on screen with STANDBY
+      // Initially collapsed by default per Apple Progressive Disclosure architecture
+      expect(find.text('Forensic Evidence'), findsOneWidget);
+      expect(find.text('2 Models Gated'), findsOneWidget);
+      expect(find.text('WavLM Base+'), findsNothing);
+
+      // Tap expansion card to disclose ML model telemetry (Level 1 Disclosure)
+      await tester.tap(find.text('Forensic Evidence'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Once expanded, both model cards appear on screen with STANDBY
       expect(find.text('WavLM Base+'), findsWidgets);
       expect(find.text('LFCC-LCNN'), findsWidgets);
       expect(find.text('SSL LATENT'), findsWidgets);
@@ -924,6 +934,163 @@ void main() {
       statsSub.cancel();
 
       // Clean up
+      await tester.pumpWidget(const SizedBox());
+      await service.dispose();
+      await tester.pump(const Duration(milliseconds: 50));
+    });
+  });
+
+  group('Apple HIG Progressive Disclosure & Overflow Resilience', () {
+    testWidgets('top role selector provides 1-glance compact pill with Attacker and Receiver modes', (tester) async {
+      tester.view.physicalSize = const Size(800, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final service = LiveCallService();
+      service.setSimulationMode(true);
+      service.setMode(CallMode.receiver);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: LiveCallScreen(service: service),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Unmistakable 1-glance labels
+      expect(find.text('⚡ Attacker'), findsOneWidget);
+      expect(find.text('🛡️ Receiver'), findsOneWidget);
+
+      // Tap Attacker segment to switch to Caller mode
+      await tester.tap(find.text('⚡ Attacker'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(service.mode, equals(CallMode.caller));
+      expect(find.textContaining('TALK AS'), findsOneWidget);
+
+      // Tap Receiver segment to switch back
+      await tester.tap(find.text('🛡️ Receiver'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(service.mode, equals(CallMode.receiver));
+
+      await tester.pumpWidget(const SizedBox());
+      await service.dispose();
+      await tester.pump(const Duration(milliseconds: 50));
+    });
+
+    testWidgets('implements two-level progressive disclosure without first-glance information overload', (tester) async {
+      tester.view.physicalSize = const Size(800, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final service = LiveCallService();
+      service.setSimulationMode(true);
+      service.setMode(CallMode.receiver);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: LiveCallScreen(service: service),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Level 0 (First Glance): No deep technical telemetry visible
+      expect(find.text('WavLM Base+'), findsNothing);
+      expect(find.text('LFCC-LCNN'), findsNothing);
+      expect(find.text('JITTER QUEUE: ~120 - 300 ms TARGET'), findsNothing);
+      expect(find.text('FORENSIC AUDIO NARRATION LOG'), findsNothing);
+
+      // Level 1 Disclosure: Tap 'Forensic Evidence' card
+      expect(find.text('Forensic Evidence'), findsOneWidget);
+      expect(find.text('2 Models Gated'), findsOneWidget);
+      await tester.tap(find.text('Forensic Evidence'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Level 1 reveals dual-model telemetry and Advanced Diagnostics card
+      expect(find.text('WavLM Base+'), findsWidgets);
+      expect(find.text('LFCC-LCNN'), findsWidgets);
+      expect(find.text('Advanced Audio Diagnostics'), findsOneWidget);
+      expect(find.text('Deep Trace'), findsOneWidget);
+
+      // But Level 2 internals (Jitter queue & narration log) are still collapsed
+      expect(find.text('JITTER QUEUE: ~120 - 300 ms TARGET'), findsNothing);
+      expect(find.text('FORENSIC AUDIO NARRATION LOG'), findsNothing);
+
+      // Level 2 Disclosure: Tap 'Advanced Audio Diagnostics' card
+      await tester.tap(find.text('Advanced Audio Diagnostics'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Level 2 reveals deep diagnostics
+      expect(find.text('JITTER QUEUE: ~120 - 300 ms TARGET'), findsOneWidget);
+      expect(find.text('BUFFER STABLE · 0 DROPS'), findsOneWidget);
+      expect(find.text('FORENSIC AUDIO NARRATION LOG'), findsOneWidget);
+      expect(find.text('Test Speaker'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await service.dispose();
+      await tester.pump(const Duration(milliseconds: 50));
+    });
+
+    testWidgets('renders with zero RenderFlex overflow on ultra-narrow 320px screen in both modes', (tester) async {
+      // 320px width represents narrowest mobile screens (iPhone SE 1st gen)
+      tester.view.physicalSize = const Size(320, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final service = LiveCallService();
+      service.setSimulationMode(true);
+      service.setMode(CallMode.receiver);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: LiveCallScreen(service: service),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Expand Level 1 and Level 2 to test all overflow-prone widgets simultaneously
+      await tester.ensureVisible(find.text('Forensic Evidence'));
+      await tester.tap(find.text('Forensic Evidence'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.ensureVisible(find.text('Advanced Audio Diagnostics'));
+      await tester.tap(find.text('Advanced Audio Diagnostics'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Switch to Caller mode to test VU meter and persona selector on 320px
+      await tester.ensureVisible(find.text('⚡ Attacker'));
+      await tester.tap(find.text('⚡ Attacker'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(service.mode, equals(CallMode.caller));
+      expect(find.text('MIC CAPTURE CHANNEL'), findsOneWidget);
+
+      // No assertion failure or RenderFlex overflow occurred
+      expect(tester.takeException(), isNull);
+
       await tester.pumpWidget(const SizedBox());
       await service.dispose();
       await tester.pump(const Duration(milliseconds: 50));

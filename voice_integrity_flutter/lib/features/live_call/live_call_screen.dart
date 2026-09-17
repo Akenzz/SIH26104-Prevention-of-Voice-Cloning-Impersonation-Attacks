@@ -222,96 +222,87 @@ class _RoleSegmentedSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: _CallTheme.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _CallTheme.border),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x06000000),
-            blurRadius: 6,
-            offset: Offset(0, 1),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: Container(
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE2E8F0),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFFCBD5E1)),
           ),
-        ],
-      ),
-      child: Row(
-        children: CallMode.values.map((mode) {
-          final isSelected = mode == currentMode;
-          final isCaller = mode == CallMode.caller;
+          child: Row(
+            children: CallMode.values.map((mode) {
+              final isSelected = mode == currentMode;
+              final isCaller = mode == CallMode.caller;
 
-          return Expanded(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(10),
-              onTap: () => onSelectMode(mode),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-                decoration: BoxDecoration(
-                  color: isSelected ? _CallTheme.surfaceElevated : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
-                  border: isSelected
-                      ? Border.all(color: _CallTheme.borderSubtle)
-                      : null,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      isCaller ? Icons.phone_iphone_rounded : Icons.shield_rounded,
-                      size: 16,
-                      color: isSelected
-                          ? (isCaller ? _CallTheme.crimson : _CallTheme.emerald)
-                          : _CallTheme.textMuted,
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        isCaller ? '📱 Caller Mode' : '🛡️ Receiver Mode',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
-                          color: isSelected ? _CallTheme.textPrimary : _CallTheme.textSecondary,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              final activeBorder = isCaller ? _CallTheme.crimsonBorder : _CallTheme.emeraldBorder;
+              final activeTextColor = isCaller ? _CallTheme.crimsonText : _CallTheme.emeraldText;
+              final activeIconColor = isCaller ? _CallTheme.crimson : _CallTheme.emerald;
+
+              return Expanded(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: () => onSelectMode(mode),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeOutCubic,
+                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
                       decoration: BoxDecoration(
-                        color: isSelected
-                            ? (isCaller ? _CallTheme.crimsonBg : _CallTheme.emeraldBg)
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                          color: isSelected
-                              ? (isCaller ? _CallTheme.crimsonBorder : _CallTheme.emeraldBorder)
-                              : _CallTheme.border,
-                        ),
+                        color: isSelected ? _CallTheme.surface : Colors.transparent,
+                        borderRadius: BorderRadius.circular(20),
+                        border: isSelected ? Border.all(color: activeBorder, width: 1.2) : null,
+                        boxShadow: isSelected
+                            ? [
+                                BoxShadow(
+                                  color: (isCaller ? _CallTheme.crimson : _CallTheme.emerald)
+                                      .withValues(alpha: 0.12),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                                const BoxShadow(
+                                  color: Color(0x0A000000),
+                                  blurRadius: 2,
+                                  offset: Offset(0, 1),
+                                ),
+                              ]
+                            : null,
                       ),
-                      child: Text(
-                        isCaller ? 'ATTACKER' : 'VICTIM',
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 9,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.6,
-                          color: isSelected
-                              ? (isCaller ? _CallTheme.crimson : _CallTheme.emerald)
-                              : _CallTheme.textMuted,
-                        ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            isCaller ? Icons.bolt_rounded : Icons.shield_rounded,
+                            size: 16,
+                            color: isSelected ? activeIconColor : _CallTheme.textMuted,
+                          ),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                isCaller ? '⚡ Attacker' : '🛡️ Receiver',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                                  letterSpacing: isSelected ? 0.2 : 0,
+                                  color: isSelected ? activeTextColor : _CallTheme.textSecondary,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
-          );
-        }).toList(),
+              );
+            }).toList(),
+          ),
+        ),
       ),
     );
   }
@@ -1262,12 +1253,16 @@ class _SpoofToggleActuatorState extends State<_SpoofToggleActuator> {
                 ),
               ],
       ),
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            runAlignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
             children: [
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -1449,17 +1444,25 @@ class _VoiceCloneProfileRack extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            runAlignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
             children: [
-              const Text(
-                'SYNTHETIC VOCAL IDENTITY PROFILES',
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.0,
-                  color: _CallTheme.textMuted,
+              const FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'SYNTHETIC VOCAL IDENTITY PROFILES',
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
+                    color: _CallTheme.textMuted,
+                  ),
                 ),
               ),
               Container(
@@ -1598,64 +1601,76 @@ class _BroadcastVuMeter extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            runAlignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
             children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(
-                      color: isActive ? accentColor : _CallTheme.textMuted,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    channelTitle,
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.1,
-                      color: _CallTheme.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    isActive ? '$rmsPercent% RMS' : 'STANDBY',
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: isActive ? accentColor : _CallTheme.textMuted,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: _CallTheme.surfaceElevated,
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: _CallTheme.border),
-                    ),
-                    child: Text(
-                      dbText,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: _CallTheme.textPrimary,
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: isActive ? accentColor : _CallTheme.textMuted,
+                        shape: BoxShape.circle,
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    Text(
+                      channelTitle,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.8,
+                        color: _CallTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      isActive ? '$rmsPercent% RMS' : 'STANDBY',
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: isActive ? accentColor : _CallTheme.textMuted,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: _CallTheme.surfaceElevated,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: _CallTheme.border),
+                      ),
+                      child: Text(
+                        dbText,
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: _CallTheme.textPrimary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -1664,7 +1679,8 @@ class _BroadcastVuMeter extends StatelessWidget {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final totalWidth = constraints.maxWidth;
-                final segmentWidth = math.max(3.0, (totalWidth / barCount) - 3);
+                const gap = 2.0;
+                final barWidth = math.max(1.5, (totalWidth - (barCount - 1) * gap) / barCount);
 
                 return Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1684,7 +1700,7 @@ class _BroadcastVuMeter extends StatelessWidget {
                     const unlitColor = Color(0xFFE2E8F0);
 
                     return Container(
-                      width: segmentWidth,
+                      width: barWidth,
                       height: 12,
                       decoration: BoxDecoration(
                         color: isLit ? litColor : unlitColor,
@@ -1699,6 +1715,8 @@ class _BroadcastVuMeter extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             subLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               fontSize: 11,
               color: _CallTheme.textMuted,
@@ -1753,17 +1771,25 @@ class _CallerTelemetryRack extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            runAlignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
             children: [
-              const Text(
-                'TRANSMISSION TELEMETRY',
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.0,
-                  color: _CallTheme.textMuted,
+              const FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'TRANSMISSION TELEMETRY',
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
+                    color: _CallTheme.textMuted,
+                  ),
                 ),
               ),
               Container(
@@ -2176,9 +2202,9 @@ class _ForensicExpansionCard extends StatelessWidget {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          initiallyExpanded: true,
-          tilePadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
-          childrenPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+          initiallyExpanded: false,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
           leading: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
@@ -2191,16 +2217,44 @@ class _ForensicExpansionCard extends StatelessWidget {
               color: _CallTheme.emerald,
             ),
           ),
-          title: const Text(
-            'Dual-Model Forensic Telemetry',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-              color: _CallTheme.textPrimary,
+          title: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Forensic Evidence',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: _CallTheme.textPrimary,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _CallTheme.surfaceElevated,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _CallTheme.border),
+                  ),
+                  child: const Text(
+                    '2 Models Gated',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w700,
+                      color: _CallTheme.textMuted,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           subtitle: const Text(
-            'WavLM Base+ & LFCC-LCNN inference telemetry for judges',
+            'Tap to inspect ML inference telemetry',
             style: TextStyle(
               fontSize: 11,
               color: _CallTheme.textMuted,
@@ -2216,15 +2270,116 @@ class _ForensicExpansionCard extends StatelessWidget {
               isConnected: isConnected,
               pulseAnimation: pulseAnimation,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
 
             // Multi-Expert Evidence Grid
             _MultiExpertEvidenceGrid(assessment: assessment),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
+
+            // Level 2 Progressive Disclosure: Advanced Audio Diagnostics
+            _AdvancedDiagnosticsExpansionCard(
+              service: service,
+              stats: stats,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// LEVEL 2 DISCLOSURE: ADVANCED AUDIO DIAGNOSTICS EXPANSION CARD
+// -----------------------------------------------------------------------------
+
+class _AdvancedDiagnosticsExpansionCard extends StatelessWidget {
+  const _AdvancedDiagnosticsExpansionCard({
+    required this.service,
+    required this.stats,
+  });
+
+  final LiveCallService service;
+  final CallStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _CallTheme.surfaceElevated,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _CallTheme.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: false,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          leading: Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: _CallTheme.surface,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _CallTheme.border),
+            ),
+            child: const Icon(
+              Icons.tune_rounded,
+              size: 18,
+              color: _CallTheme.textSecondary,
+            ),
+          ),
+          title: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Advanced Audio Diagnostics',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: _CallTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _CallTheme.surface,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _CallTheme.border),
+                  ),
+                  child: const Text(
+                    'Deep Trace',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      color: _CallTheme.textMuted,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          subtitle: const Text(
+            'Speaker playback buffer, jitter queue & audio narration trace',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 10.5,
+              color: _CallTheme.textMuted,
+            ),
+          ),
+          children: [
+            const Divider(color: _CallTheme.border, height: 1),
+            const SizedBox(height: 12),
 
             // Jitter Buffer Telemetry & Speaker Playback
             SpeakerPlaybackCard(service: service, stats: stats),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
 
             // Timestamped Event Logs
             _ReasoningTracePanel(logs: service.reasoningLogs),
@@ -2393,15 +2548,18 @@ class _LiveDualModelProbabilityStrip extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Text(
-                isConnected
-                    ? 'WIN #${assessment.windowIndex} · ${assessment.latencyMs.toStringAsFixed(0)}ms'
-                    : '50/50 ENSEMBLE',
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 9.5,
-                  fontWeight: FontWeight.w700,
-                  color: _CallTheme.textSecondary,
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  isConnected
+                      ? 'WIN #${assessment.windowIndex} · ${assessment.latencyMs.toStringAsFixed(0)}ms'
+                      : '50/50 ENSEMBLE',
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w700,
+                    color: _CallTheme.textSecondary,
+                  ),
                 ),
               ),
             ],
@@ -2412,7 +2570,7 @@ class _LiveDualModelProbabilityStrip extends StatelessWidget {
         // Dual Model Probability Cards
         LayoutBuilder(
           builder: (context, constraints) {
-            final isCompact = constraints.maxWidth < 360;
+            final isCompact = constraints.maxWidth < 420;
 
             final cardWavlm = _LiveModelProbabilityCard(
               modelName: 'WavLM Base+',
@@ -2796,20 +2954,24 @@ class _ExpertMetricCard extends StatelessWidget {
                   ),
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: _CallTheme.surface,
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: _CallTheme.border),
-                ),
-                child: Text(
-                  '${(weight * 100).toInt()}% WT',
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    color: _CallTheme.textMuted,
+              const SizedBox(width: 4),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _CallTheme.surface,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: _CallTheme.border),
+                  ),
+                  child: Text(
+                    '${(weight * 100).toInt()}% WT',
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      color: _CallTheme.textMuted,
+                    ),
                   ),
                 ),
               ),
@@ -2820,28 +2982,38 @@ class _ExpertMetricCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(
-                probText,
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                  color: accentColor,
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    probText,
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: accentColor,
+                    ),
+                  ),
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(
-                  color: _CallTheme.surface,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: accentColor.withValues(alpha: 0.5)),
-                ),
-                child: Text(
-                  riskLevel.label,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    color: accentColor,
+              const SizedBox(width: 6),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _CallTheme.surface,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: accentColor.withValues(alpha: 0.5)),
+                  ),
+                  child: Text(
+                    riskLevel.label,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      color: accentColor,
+                    ),
                   ),
                 ),
               ),
@@ -3004,44 +3176,62 @@ class _SpeakerPlaybackCardState extends State<SpeakerPlaybackCard> {
 
           // Jitter Buffer Telemetry Bar
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
               color: _CallTheme.surface,
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: _CallTheme.border),
             ),
-            child: const Wrap(
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 6,
                   children: [
-                    Icon(Icons.tune_rounded, size: 13, color: _CallTheme.textMuted),
-                    SizedBox(width: 6),
-                    Text(
-                      'JITTER QUEUE: ~120 - 300 ms TARGET',
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: _CallTheme.textMuted,
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+                      child: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.tune_rounded, size: 13, color: _CallTheme.textMuted),
+                            SizedBox(width: 6),
+                            Text(
+                              'JITTER QUEUE: ~120 - 300 ms TARGET',
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: _CallTheme.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+                      child: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'BUFFER STABLE · 0 DROPS',
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: _CallTheme.emerald,
+                          ),
+                        ),
                       ),
                     ),
                   ],
-                ),
-                Text(
-                  'BUFFER STABLE · 0 DROPS',
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    color: _CallTheme.emerald,
-                  ),
-                ),
-              ],
+                );
+              },
             ),
           ),
           const SizedBox(height: 12),
@@ -3106,25 +3296,33 @@ class _ReasoningTracePanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            runAlignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
             children: [
-              const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.terminal_rounded, size: 16, color: _CallTheme.textSecondary),
-                  SizedBox(width: 8),
-                  Text(
-                    'FORENSIC AUDIO NARRATION LOG',
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.0,
-                      color: _CallTheme.textSecondary,
+              const FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.terminal_rounded, size: 16, color: _CallTheme.textSecondary),
+                    SizedBox(width: 8),
+                    Text(
+                      'FORENSIC AUDIO NARRATION LOG',
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.8,
+                        color: _CallTheme.textSecondary,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
