@@ -15,8 +15,20 @@ enum AudioCaptureStatus {
 }
 
 /// Service managing microphone capture in 16-bit PCM mono format at 16kHz.
+///
+/// Features hardware echo cancellation (`echoCancel`) and noise suppression (`noiseSuppress`)
+/// enabled by default to prevent acoustic feedback loops between speaker and microphone
+/// during live demonstrations in the same physical room, while providing easy runtime toggles.
 class AudioCaptureService {
-  AudioCaptureService({AudioRecorder? recorder}) : _recorderInstance = recorder;
+  AudioCaptureService({
+    AudioRecorder? recorder,
+    bool echoCancel = true,
+    bool noiseSuppress = true,
+    bool autoGain = false,
+  })  : _recorderInstance = recorder,
+        _echoCancel = echoCancel,
+        _noiseSuppress = noiseSuppress,
+        _autoGain = autoGain;
 
   AudioRecorder? _recorderInstance;
   AudioRecorder get _recorder => _recorderInstance ??= AudioRecorder();
@@ -32,6 +44,10 @@ class AudioCaptureService {
   String? _errorMessage;
   double _currentLevel = 0.0;
 
+  bool _echoCancel;
+  bool _noiseSuppress;
+  bool _autoGain;
+
   Stream<Uint8List> get pcmStream => _pcmChunkController.stream;
   Stream<double> get audioLevelStream => _audioLevelController.stream;
   Stream<AudioCaptureStatus> get statusStream => _statusController.stream;
@@ -40,6 +56,21 @@ class AudioCaptureService {
   bool get isRecording => _status == AudioCaptureStatus.recording;
   String? get errorMessage => _errorMessage;
   double get currentLevel => _currentLevel;
+
+  bool get echoCancel => _echoCancel;
+  bool get noiseSuppress => _noiseSuppress;
+  bool get autoGain => _autoGain;
+
+  /// Configure hardware acoustic processing toggles.
+  void setAcousticProcessing({
+    bool? echoCancel,
+    bool? noiseSuppress,
+    bool? autoGain,
+  }) {
+    if (echoCancel != null) _echoCancel = echoCancel;
+    if (noiseSuppress != null) _noiseSuppress = noiseSuppress;
+    if (autoGain != null) _autoGain = autoGain;
+  }
 
   void _setStatus(AudioCaptureStatus status, [String? error]) {
     _status = status;
@@ -58,7 +89,12 @@ class AudioCaptureService {
   }
 
   /// Start streaming microphone audio in 16-bit PCM mono.
-  Future<bool> startStream({int sampleRate = 16000}) async {
+  Future<bool> startStream({
+    int sampleRate = 16000,
+    bool? echoCancel,
+    bool? noiseSuppress,
+    bool? autoGain,
+  }) async {
     if (isRecording) return true;
 
     _setStatus(AudioCaptureStatus.requestingPermission);
@@ -72,15 +108,20 @@ class AudioCaptureService {
       return false;
     }
 
+    final useEchoCancel = echoCancel ?? _echoCancel;
+    final useNoiseSuppress = noiseSuppress ?? _noiseSuppress;
+    final useAutoGain = autoGain ?? _autoGain;
+
     try {
-      // Configure strictly for 16-bit PCM mono 16000Hz
-      const recordConfig = RecordConfig(
+      // Hardware echo cancellation and noise suppression enabled by default to eliminate
+      // acoustic feedback loop from receiver loudspeaker back into caller microphone in live demo rooms.
+      final recordConfig = RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: 16000,
         numChannels: 1,
-        autoGain: true,
-        echoCancel: true,
-        noiseSuppress: true,
+        autoGain: useAutoGain,
+        echoCancel: useEchoCancel,
+        noiseSuppress: useNoiseSuppress,
       );
 
       final stream = await _recorder.startStream(recordConfig);

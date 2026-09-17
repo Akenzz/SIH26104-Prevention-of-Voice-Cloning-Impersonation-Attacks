@@ -12,6 +12,8 @@ class VoiceIntegrityApp extends StatelessWidget {
       title: 'Voice Integrity',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
+      darkTheme: AppTheme.light(),
+      themeMode: ThemeMode.light,
       home: const VoiceIntegrityShell(),
     );
   }

@@ -167,6 +167,20 @@ class LiveRiskAssessment {
       windowIndex: 0,
       latencyMs: 0.0,
       timestamp: DateTime.now(),
+      expertScores: const {
+        'wavlm': LiveExpertScore(
+          name: 'wavlm',
+          label: 'WavLM Base+',
+          probability: null,
+          riskLevel: LiveRiskLevel.unavailable,
+        ),
+        'hybrid': LiveExpertScore(
+          name: 'hybrid',
+          label: 'LFCC-LCNN Hybrid',
+          probability: null,
+          riskLevel: LiveRiskLevel.unavailable,
+        ),
+      },
     );
   }
 
@@ -181,6 +195,20 @@ class LiveRiskAssessment {
       latencyMs: 18.0,
       timestamp: DateTime.now(),
       isSpoofedByCaller: isSpoofTarget,
+      expertScores: {
+        'wavlm': LiveExpertScore(
+          name: 'wavlm',
+          label: 'WavLM Base+',
+          probability: isSpoofTarget ? 0.52 : 0.22,
+          riskLevel: LiveRiskLevel.transitioning,
+        ),
+        'hybrid': LiveExpertScore(
+          name: 'hybrid',
+          label: 'LFCC-LCNN Hybrid',
+          probability: isSpoofTarget ? 0.48 : 0.28,
+          riskLevel: LiveRiskLevel.transitioning,
+        ),
+      },
     );
   }
 
@@ -192,7 +220,8 @@ class LiveRiskAssessment {
             ?.toDouble();
 
     final expertsMap = <String, LiveExpertScore>{};
-    final rawScores = json['scores'];
+    final rawScores =
+        json['scores'] ?? json['experts'] ?? json['expert_scores'];
     if (rawScores is Map<String, dynamic>) {
       rawScores.forEach((key, val) {
         if (val is Map<String, dynamic>) {

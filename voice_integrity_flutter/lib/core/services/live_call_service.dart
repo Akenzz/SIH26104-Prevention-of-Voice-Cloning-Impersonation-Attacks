@@ -8,6 +8,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/live_call_models.dart';
 import 'audio_capture_service.dart';
 import 'audio_playback_service.dart';
+import 'pcm_resampler.dart';
 
 /// Live Call orchestrator managing WebSocket connections to /ws/caller and /ws/receiver,
 /// microphone capture, speaker playback, and real-time risk assessment updates.
@@ -29,9 +30,32 @@ class LiveCallService {
   final _statsController = StreamController<CallStats>.broadcast();
   final _reasoningLogsController =
       StreamController<List<ReasoningLogEntry>>.broadcast();
+  final _sessionRecordingController =
+      StreamController<Uint8List?>.broadcast();
 
   static const String defaultHost = 'codequantum.in';
   static const int defaultPort = 443;
+
+  /// 15-second heartbeat interval for WebSocket ping/pong keep-alive
+  static const Duration heartbeatInterval = Duration(seconds: 15);
+
+  /// Exponential backoff delays for auto-reconnect on unexpected drops: 1s, 2s, 4s, 8s (up to 4 attempts)
+  static const List<Duration> reconnectBackoffDelays = [
+    Duration(seconds: 1),
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 8),
+  ];
+
+  /// Dynamic available personas for voice spoof demonstration
+  static const List<String> availablePersonas = [
+    'Clone · Female',
+    'Clone · Male',
+    'Clone · Deep',
+    'Clone · Child',
+    'Robotic',
+    'Teammate 3',
+  ];
 
   // State
   CallMode _mode = CallMode.caller;
@@ -41,6 +65,9 @@ class LiveCallService {
   bool _useSimulationMode = false;
   bool _isSpoofActive = false;
   String _spoofSpeaker = 'Teammate 3';
+
+  String _callerName = 'Verified Voice Channel';
+  String _callerSubtitle = 'Secure Audio Line · 16 kHz Direct';
 
   LiveRiskAssessment _currentAssessment = LiveRiskAssessment.initial();
   CallStats _stats = const CallStats();
@@ -55,20 +82,64 @@ class LiveCallService {
   Timer? _sessionTimer;
   Timer? _spoofTransitionTimer;
   Timer? _simulationScoreTimer;
+  Timer? _heartbeatTimer;
+  Timer? _reconnectTimer;
+  int _reconnectAttempts = 0;
+  bool _isCallActive = false;
+
   DateTime? _callStartTime;
   DateTime? _spoofStartTime;
   Duration _accumulatedSpoofDuration = Duration.zero;
+
+  DateTime _lastStatsEmitTime = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// High-performance audio level notifier decoupled from full-screen setState
+  final ValueNotifier<double> audioLevelNotifier = ValueNotifier<double>(0.0);
+  double get currentAudioLevel => audioLevelNotifier.value;
+
+  // Temporary In-Memory Session Audio Recording (Volatile proof for judges)
+  final List<int> _sessionPcmBuffer = [];
+  Uint8List? _lastSessionWavBytes;
+  Duration? _lastSessionDuration;
+  static const int _maxSessionBufferBytes = 16000 * 2 * 180; // 3 min max in RAM (~5.76 MB)
 
   // Public getters
   CallMode get mode => _mode;
   CallConnectionState get connectionState => _connectionState;
   bool get isConnected => _connectionState == CallConnectionState.connected;
+  bool get isReconnecting => _connectionState == CallConnectionState.reconnecting;
+  bool get isCallActive => _isCallActive;
+  int get reconnectAttempts => _reconnectAttempts;
   bool get isSpoofActive => _isSpoofActive;
   String get spoofSpeaker => _spoofSpeaker;
   String get serverHost => _serverHost;
   int get serverPort => _serverPort;
   bool get useSimulationMode => _useSimulationMode;
   String get webSocketUrl => _buildWebSocketUrl();
+  String get callerName => _callerName;
+  String get callerSubtitle => _callerSubtitle;
+  bool get isHeartbeatActive =>
+      _heartbeatTimer != null && _heartbeatTimer!.isActive;
+
+  void setCallerIdentity(String name, [String? subtitle]) {
+    _callerName = name;
+    if (subtitle != null) _callerSubtitle = subtitle;
+  }
+
+  void _emitStatsThrottled({bool force = false}) {
+    final now = DateTime.now();
+    if (force || now.difference(_lastStatsEmitTime).inMilliseconds >= 250) {
+      _lastStatsEmitTime = now;
+      if (!_statsController.isClosed) {
+        _statsController.add(_stats);
+      }
+    }
+  }
+
+  Uint8List? get lastSessionWavBytes => _lastSessionWavBytes;
+  Duration? get lastSessionDuration => _lastSessionDuration;
+  bool get hasSessionRecording =>
+      _lastSessionWavBytes != null && _lastSessionWavBytes!.isNotEmpty;
 
   LiveRiskAssessment get currentAssessment => _currentAssessment;
   CallStats get stats => _stats;
@@ -84,6 +155,8 @@ class LiveCallService {
   Stream<CallStats> get statsStream => _statsController.stream;
   Stream<List<ReasoningLogEntry>> get reasoningLogsStream =>
       _reasoningLogsController.stream;
+  Stream<Uint8List?> get sessionRecordingStream =>
+      _sessionRecordingController.stream;
 
   /// Update the server host and port.
   void setServerEndpoint(String host, int port) {
@@ -97,11 +170,12 @@ class LiveCallService {
   }
 
   /// Set the active mode (Caller vs Receiver).
-  void setMode(CallMode newMode) {
+  Future<void> setMode(CallMode newMode) async {
     if (_mode == newMode) return;
-    final wasConnected = isConnected;
-    if (wasConnected) {
-      disconnect();
+    if (isConnected ||
+        _connectionState == CallConnectionState.connecting ||
+        _connectionState == CallConnectionState.reconnecting) {
+      await disconnect();
     }
     _mode = newMode;
     _resetState();
@@ -126,7 +200,7 @@ class LiveCallService {
       input = input.replaceFirst(RegExp(r'^(ws|http)://'), '');
     }
 
-    // Extract any path component (e.g. "codequantum.in/relay" -> host="codequantum.in", path="relay")
+    // Extract any path component
     String hostPart = input;
     String subPath = '';
     final slashIndex = input.indexOf('/');
@@ -135,7 +209,7 @@ class LiveCallService {
       subPath = input.substring(slashIndex + 1);
     }
 
-    // Extract any embedded port from hostPart (e.g. "codequantum.in:8001")
+    // Extract any embedded port from hostPart
     int port = _serverPort;
     if (hostPart.contains(':')) {
       final parts = hostPart.split(':');
@@ -145,11 +219,9 @@ class LiveCallService {
         port = parsedPort;
       }
     } else if (isSecure && port == 8001) {
-      // If user specified wss:// or https:// and left default port 8001, route to standard SSL port 443
       port = 443;
     }
 
-    // If port is 443, treat as secure wss
     if (port == 443) {
       isSecure = true;
     }
@@ -162,8 +234,6 @@ class LiveCallService {
       subPath = subPath.substring(1);
     }
 
-    // If connecting over secure SSL (port 443 or wss) to codequantum.in and no subpath is given,
-    // default subpath to 'relay' so it matches the Apache reverse proxy (/relay/ws/caller)
     if (isSecure && hostPart.contains('codequantum.in') && subPath.isEmpty) {
       subPath = 'relay';
     }
@@ -179,10 +249,18 @@ class LiveCallService {
 
   /// Connect to the WebSocket endpoint (or start simulation if enabled).
   Future<void> connect() async {
-    if (isConnected || _connectionState == CallConnectionState.connecting) {
+    if (isConnected ||
+        _connectionState == CallConnectionState.connecting ||
+        _connectionState == CallConnectionState.reconnecting) {
       return;
     }
 
+    _isCallActive = true;
+    _reconnectAttempts = 0;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+
+    clearSessionRecording();
     _setConnectionState(CallConnectionState.connecting);
     _callStartTime = DateTime.now();
     _startSessionTimer();
@@ -199,18 +277,18 @@ class LiveCallService {
       final uri = Uri.parse(wsUrl);
       _channel = WebSocketChannel.connect(uri);
 
-      // Listen for socket events
+      // Listen for socket events with cancelOnError: false to survive transient network hiccups
       _channelSubscription = _channel!.stream.listen(
         _handleSocketMessage,
         onError: (Object error) {
           debugPrint('[LiveCallService] WebSocket error: $error');
-          _handleConnectionFailure(error.toString());
+          _handleUnexpectedDisconnection('Socket error: $error');
         },
         onDone: () {
           debugPrint('[LiveCallService] WebSocket closed');
-          disconnect();
+          _handleUnexpectedDisconnection('Remote server closed socket');
         },
-        cancelOnError: true,
+        cancelOnError: false,
       );
 
       // Send initial handshake
@@ -225,14 +303,140 @@ class LiveCallService {
       _channel!.sink.add(startMsg);
 
       _setConnectionState(CallConnectionState.connected);
+      _startHeartbeat();
       _bindAudioPipelines();
     } catch (error) {
       debugPrint('[LiveCallService] Connection initiation error: $error');
-      _handleConnectionFailure(error.toString());
+      _handleUnexpectedDisconnection('Initial connection error: $error');
+    }
+  }
+
+  /// 15-second keep-alive ping/pong heartbeat timer to prevent reverse proxy (Nginx/Apache)
+  /// and carrier NAT timeouts from killing idle sockets.
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(heartbeatInterval, (_) {
+      if (isConnected && _channel != null && !_useSimulationMode) {
+        try {
+          _channel!.sink.add(jsonEncode({'type': 'ping'}));
+        } catch (e) {
+          debugPrint('[LiveCallService] Ping heartbeat send error: $e');
+        }
+      }
+    });
+  }
+
+  void _stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
+
+  /// Handle unexpected socket disconnects with an exponential backoff auto-reconnect loop.
+  void _handleUnexpectedDisconnection(String reason) {
+    if (!_isCallActive || _useSimulationMode) {
+      disconnect();
+      return;
+    }
+
+    _stopHeartbeat();
+    _channelSubscription?.cancel();
+    _channelSubscription = null;
+    try {
+      _channel?.sink.close();
+    } catch (_) {}
+    _channel = null;
+
+    if (_reconnectAttempts < reconnectBackoffDelays.length) {
+      final delay = reconnectBackoffDelays[_reconnectAttempts];
+      _reconnectAttempts++;
+      _setConnectionState(CallConnectionState.reconnecting);
+      _addReasoningLog(
+        'Connection interrupted ($reason). Reconnecting in ${delay.inSeconds}s (attempt $_reconnectAttempts/${reconnectBackoffDelays.length})...',
+        LiveRiskLevel.transitioning,
+      );
+
+      _reconnectTimer?.cancel();
+      _reconnectTimer = Timer(delay, () {
+        if (_isCallActive) {
+          _executeReconnectAttempt();
+        }
+      });
+    } else {
+      _addReasoningLog(
+        'Auto-reconnect failed after ${reconnectBackoffDelays.length} attempts. Call ended.',
+        LiveRiskLevel.unavailable,
+      );
+      _handleConnectionFailure('Max reconnect attempts reached ($reason)');
+    }
+  }
+
+  /// Execute an auto-reconnect attempt preserving session duration and stats.
+  Future<void> _executeReconnectAttempt() async {
+    if (!_isCallActive || _useSimulationMode) return;
+    final wsUrl = _buildWebSocketUrl();
+    debugPrint(
+      '[LiveCallService] Auto-reconnecting to $wsUrl (attempt $_reconnectAttempts)...',
+    );
+
+    try {
+      final uri = Uri.parse(wsUrl);
+      _channel = WebSocketChannel.connect(uri);
+
+      _channelSubscription = _channel!.stream.listen(
+        _handleSocketMessage,
+        onError: (Object error) {
+          debugPrint('[LiveCallService] Reconnected socket error: $error');
+          _handleUnexpectedDisconnection('Socket error: $error');
+        },
+        onDone: () {
+          debugPrint('[LiveCallService] Reconnected socket closed');
+          _handleUnexpectedDisconnection('Remote server closed socket');
+        },
+        cancelOnError: false,
+      );
+
+      // Re-send handshake
+      final startMsg = jsonEncode({
+        'type': 'start',
+        'role': _mode == CallMode.caller ? 'caller' : 'receiver',
+        'sample_rate': 16000,
+        'encoding': 'pcm_s16le',
+        'channels': 1,
+        'timestamp': DateTime.now().toIso8601String(),
+      });
+      _channel!.sink.add(startMsg);
+
+      // Re-sync spoof status if active
+      if (_mode == CallMode.caller && _isSpoofActive) {
+        _channel!.sink.add(jsonEncode({
+          'type': 'toggle_spoof',
+          'enabled': true,
+          'speaker': _spoofSpeaker,
+          'timestamp': DateTime.now().toIso8601String(),
+        }));
+      }
+
+      _reconnectAttempts = 0;
+      _setConnectionState(CallConnectionState.connected);
+      _startHeartbeat();
+      _addReasoningLog(
+        'WebSocket reconnected successfully to $wsUrl. Line integrity verified.',
+        LiveRiskLevel.low,
+      );
+    } catch (error) {
+      debugPrint('[LiveCallService] Reconnection attempt failed: $error');
+      _handleUnexpectedDisconnection('Reconnect error: $error');
     }
   }
 
   void _handleConnectionFailure(String error) {
+    _sessionTimer?.cancel();
+    _sessionTimer = null;
+    _callStartTime = null;
+    _micAudioSubscription?.cancel();
+    _micLevelSubscription?.cancel();
+    _speakerLevelSubscription?.cancel();
+    audioLevelNotifier.value = 0.0;
     _setConnectionState(CallConnectionState.error);
     _addReasoningLog(
       'Connection failed to ${_buildWebSocketUrl()}: $error. You can switch to Simulation Mode for offline demonstrations.',
@@ -242,7 +446,7 @@ class LiveCallService {
 
   void _bindAudioPipelines() {
     if (_mode == CallMode.caller) {
-      // Start microphone capture
+      // Start microphone capture with hardware echo cancellation & noise suppression
       _captureService.startStream(sampleRate: 16000).then((started) {
         if (!started) {
           _addReasoningLog(
@@ -256,32 +460,33 @@ class LiveCallService {
       _micAudioSubscription?.cancel();
       _micAudioSubscription = _captureService.pcmStream.listen((chunk) {
         if (!isConnected || chunk.isEmpty) return;
+        _recordSessionChunk(chunk);
         try {
           _channel?.sink.add(chunk);
           _stats = _stats.copyWith(
             packetsSent: _stats.packetsSent + 1,
             bytesTransferred: _stats.bytesTransferred + chunk.length,
           );
-          _statsController.add(_stats);
+          _emitStatsThrottled();
         } catch (e) {
           debugPrint('[LiveCallService] Error sending PCM chunk: $e');
         }
       });
 
-      // Track mic VU meter
+      // Track mic audio level without bombarding root setState
       _micLevelSubscription?.cancel();
       _micLevelSubscription = _captureService.audioLevelStream.listen((level) {
+        audioLevelNotifier.value = level;
         _stats = _stats.copyWith(audioLevel: level);
-        _statsController.add(_stats);
       });
     } else {
-      // Receiver: track speaker playback VU meter
+      // Receiver: track speaker playback audio level without bombarding root setState
       _speakerLevelSubscription?.cancel();
       _speakerLevelSubscription = _playbackService.playbackLevelStream.listen((
         level,
       ) {
+        audioLevelNotifier.value = level;
         _stats = _stats.copyWith(audioLevel: level);
-        _statsController.add(_stats);
       });
     }
   }
@@ -296,9 +501,10 @@ class LiveCallService {
         packetsReceived: _stats.packetsReceived + 1,
         bytesTransferred: _stats.bytesTransferred + bytes.length,
       );
-      _statsController.add(_stats);
+      _emitStatsThrottled();
 
       if (_mode == CallMode.receiver) {
+        _recordSessionChunk(bytes);
         _playbackService.ingestPcmChunk(bytes);
       }
       return;
@@ -313,6 +519,17 @@ class LiveCallService {
             .toString()
             .toLowerCase();
 
+        // 0. Keep-alive heartbeat Ping/Pong
+        if (type == 'ping') {
+          try {
+            _channel?.sink.add(jsonEncode({'type': 'pong'}));
+          } catch (_) {}
+          return;
+        }
+        if (type == 'pong') {
+          return;
+        }
+
         // 1. Spoof Toggle / Transition Event
         if (type == 'spoof_toggle' ||
             type == 'toggle_spoof' ||
@@ -321,7 +538,9 @@ class LiveCallService {
           final enabled = (data['enabled'] as bool?) ??
               (data['spoof_enabled'] as bool?) ??
               false;
-          _handleIncomingSpoofToggle(enabled);
+          final speaker = (data['speaker'] as String?) ??
+              (data['spoof_speaker'] as String?);
+          _handleIncomingSpoofToggle(enabled, speaker: speaker);
           return;
         }
 
@@ -330,6 +549,12 @@ class LiveCallService {
           final b64 = data['data'] as String?;
           if (b64 != null && _mode == CallMode.receiver) {
             final pcm = base64Decode(b64);
+            _recordSessionChunk(pcm);
+            _stats = _stats.copyWith(
+              packetsReceived: _stats.packetsReceived + 1,
+              bytesTransferred: _stats.bytesTransferred + pcm.length,
+            );
+            _emitStatsThrottled();
             _playbackService.ingestPcmChunk(pcm);
           }
           return;
@@ -352,7 +577,10 @@ class LiveCallService {
   /// Critical UX Mitigation:
   /// When spoofing is toggled, immediately show an amber buffer analyzing state for 1.5s
   /// until post-switch score arrives.
-  void _handleIncomingSpoofToggle(bool enabled) {
+  void _handleIncomingSpoofToggle(bool enabled, {String? speaker}) {
+    if (speaker != null && speaker.isNotEmpty) {
+      _spoofSpeaker = speaker;
+    }
     _isSpoofActive = enabled;
     _spoofTransitionTimer?.cancel();
 
@@ -421,6 +649,31 @@ class LiveCallService {
     );
   }
 
+  /// Set the active cloned persona/speaker on the Caller side.
+  void setSpoofSpeaker(String speaker) {
+    if (_spoofSpeaker == speaker) return;
+    _spoofSpeaker = speaker;
+    if (_isSpoofActive) {
+      final eventPayload = {
+        'type': 'toggle_spoof',
+        'enabled': true,
+        'speaker': _spoofSpeaker,
+        'timestamp': DateTime.now().toIso8601String(),
+      };
+
+      if (isConnected && !_useSimulationMode) {
+        try {
+          _channel?.sink.add(jsonEncode(eventPayload));
+        } catch (e) {
+          debugPrint('[LiveCallService] Failed to send spoof speaker change: $e');
+        }
+      } else if (_useSimulationMode) {
+        _handleIncomingSpoofToggle(true);
+      }
+    }
+    _statsController.add(_stats);
+  }
+
   /// Toggle Spoof ('Talk as Teammate 3') on the Caller side.
   void toggleSpoof({String? speaker}) {
     if (_mode != CallMode.caller) return;
@@ -451,6 +704,7 @@ class LiveCallService {
     } else if (_useSimulationMode) {
       _handleIncomingSpoofToggle(_isSpoofActive);
     }
+    _statsController.add(_stats);
   }
 
   /// Start simulation session for offline judge demonstrations.
@@ -464,6 +718,17 @@ class LiveCallService {
     _bindAudioPipelines();
 
     if (_mode == CallMode.receiver) {
+      // Capture mic during offline receiver simulations so presenter voice can be replayed to judges
+      _captureService.startStream(sampleRate: 16000).then((started) {
+        if (started && isConnected) {
+          _micAudioSubscription?.cancel();
+          _micAudioSubscription = _captureService.pcmStream.listen((chunk) {
+            if (!isConnected || chunk.isEmpty) return;
+            _recordSessionChunk(chunk);
+          });
+        }
+      });
+
       var step = 0;
       _simulationScoreTimer?.cancel();
       _simulationScoreTimer = Timer.periodic(const Duration(milliseconds: 1000), (
@@ -493,13 +758,13 @@ class LiveCallService {
             'wavlm': LiveExpertScore(
               name: 'wavlm',
               label: 'WavLM Base+',
-              probability: (prob - 0.03).clamp(0.01, 0.99),
+              probability: (prob + (math.sin(step * 0.9) * 0.03)).clamp(0.01, 0.99),
               riskLevel: level,
             ),
             'hybrid': LiveExpertScore(
               name: 'hybrid',
               label: 'LFCC-LCNN Hybrid',
-              probability: (prob + 0.04).clamp(0.01, 0.99),
+              probability: (prob + (math.cos(step * 1.1) * 0.03)).clamp(0.01, 0.99),
               riskLevel: level,
             ),
           },
@@ -512,7 +777,7 @@ class LiveCallService {
 
   void _startSessionTimer() {
     _sessionTimer?.cancel();
-    _sessionTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+    _sessionTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (_callStartTime == null) return;
       final totalElapsed = DateTime.now().difference(_callStartTime!);
       Duration currentSpoof = _accumulatedSpoofDuration;
@@ -524,7 +789,7 @@ class LiveCallService {
         duration: totalElapsed,
         spoofDuration: currentSpoof,
       );
-      _statsController.add(_stats);
+      _emitStatsThrottled(force: true);
     });
   }
 
@@ -558,8 +823,18 @@ class LiveCallService {
 
   /// Disconnect and release the active call session.
   Future<void> disconnect() async {
+    _isCallActive = false;
+    _reconnectAttempts = 0;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _stopHeartbeat();
+
     _sessionTimer?.cancel();
     _sessionTimer = null;
+    _callStartTime = null;
+    _isSpoofActive = false;
+    _spoofStartTime = null;
+    _accumulatedSpoofDuration = Duration.zero;
     _spoofTransitionTimer?.cancel();
     _spoofTransitionTimer = null;
     _simulationScoreTimer?.cancel();
@@ -575,6 +850,26 @@ class LiveCallService {
     await _captureService.stopStream();
     await _playbackService.stop();
 
+    // Finalize temporary in-memory session recording (proof for judges)
+    if (_sessionPcmBuffer.length >= 3200) {
+      final pcmBytes = Uint8List.fromList(_sessionPcmBuffer);
+      _lastSessionDuration =
+          Duration(milliseconds: (_sessionPcmBuffer.length ~/ 32));
+      _lastSessionWavBytes = PcmResampler.createWavContainer(
+        pcmData: pcmBytes,
+        sampleRate: 16000,
+        channels: 1,
+        bitsPerSample: 16,
+      );
+    } else {
+      _lastSessionWavBytes = null;
+      _lastSessionDuration = null;
+    }
+    _sessionPcmBuffer.clear();
+    if (!_sessionRecordingController.isClosed) {
+      _sessionRecordingController.add(_lastSessionWavBytes);
+    }
+
     try {
       await _channelSubscription?.cancel();
       _channelSubscription = null;
@@ -582,8 +877,58 @@ class LiveCallService {
       _channel = null;
     } catch (_) {}
 
+    audioLevelNotifier.value = 0.0;
     _setConnectionState(CallConnectionState.disconnected);
   }
+
+  void _recordSessionChunk(Uint8List chunk) {
+    if (chunk.isEmpty) return;
+    _sessionPcmBuffer.addAll(chunk);
+    if (_sessionPcmBuffer.length > _maxSessionBufferBytes) {
+      final excess = _sessionPcmBuffer.length - _maxSessionBufferBytes;
+      final aligned = excess + (excess % 2);
+      _sessionPcmBuffer.removeRange(0, aligned);
+    }
+  }
+
+  /// Purge the temporary in-memory session recording.
+  /// Called immediately when user switches tabs or leaves the call screen.
+  void clearSessionRecording() {
+    _sessionPcmBuffer.clear();
+    _lastSessionWavBytes = null;
+    _lastSessionDuration = null;
+    if (!_sessionRecordingController.isClosed) {
+      _sessionRecordingController.add(null);
+    }
+  }
+
+  @visibleForTesting
+  void setSessionRecordingForTesting(Uint8List? wavBytes, [Duration? duration]) {
+    _lastSessionWavBytes = wavBytes;
+    _lastSessionDuration =
+        duration ?? (wavBytes != null ? const Duration(seconds: 2) : null);
+    if (!_sessionRecordingController.isClosed) {
+      _sessionRecordingController.add(_lastSessionWavBytes);
+    }
+  }
+
+  @visibleForTesting
+  void setAssessmentForTesting(LiveRiskAssessment assessment) {
+    _applyRiskAssessment(assessment);
+  }
+
+  @visibleForTesting
+  void setConnectionStateForTesting(CallConnectionState state) {
+    _setConnectionState(state);
+  }
+
+  @visibleForTesting
+  void triggerUnexpectedDisconnectionForTesting(String reason) =>
+      _handleUnexpectedDisconnection(reason);
+
+  @visibleForTesting
+  void handleSocketMessageForTesting(dynamic msg) =>
+      _handleSocketMessage(msg);
 
   void _resetState() {
     _isSpoofActive = false;
@@ -593,6 +938,7 @@ class LiveCallService {
     _stats = const CallStats();
     _currentAssessment = LiveRiskAssessment.initial();
     _reasoningLogs.clear();
+    audioLevelNotifier.value = 0.0;
 
     _statsController.add(_stats);
     _riskAssessmentController.add(_currentAssessment);
@@ -601,12 +947,15 @@ class LiveCallService {
 
   /// Dispose all controllers and services.
   Future<void> dispose() async {
+    clearSessionRecording();
     await disconnect();
     await _captureService.dispose();
     await _playbackService.dispose();
+    audioLevelNotifier.dispose();
     await _connectionStateController.close();
     await _riskAssessmentController.close();
     await _statsController.close();
     await _reasoningLogsController.close();
+    await _sessionRecordingController.close();
   }
 }
