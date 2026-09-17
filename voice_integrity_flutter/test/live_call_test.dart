@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:audioplayers_platform_interface/audioplayers_platform_interface.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_integrity_flutter/core/models/live_call_models.dart';
 import 'package:voice_integrity_flutter/core/services/audio_capture_service.dart';
+import 'package:voice_integrity_flutter/core/services/audio_denoise_processor.dart';
 import 'package:voice_integrity_flutter/core/services/audio_playback_service.dart';
 import 'package:voice_integrity_flutter/core/services/live_call_service.dart';
 import 'package:voice_integrity_flutter/core/services/pcm_resampler.dart';
@@ -1094,6 +1096,129 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       await service.dispose();
       await tester.pump(const Duration(milliseconds: 50));
+    });
+  });
+
+  group('AudioDenoiseProcessor & Fan Squelch Gating', () {
+    test('HPF 120Hz significantly attenuates 60Hz fan/mains hum while passing 1000Hz speech', () {
+      final processor = AudioDenoiseProcessor(
+        speechThresholdRms: 0.001, // allow all through gate to isolate filter frequency response
+        holdTimeMs: 1000,
+      );
+
+      // Generate 60Hz sine tone (1600 samples = 100ms at 16kHz)
+      final samples60Hz = Int16List(1600);
+      for (var i = 0; i < 1600; i++) {
+        final phase = 2 * math.pi * 60.0 * i / 16000.0;
+        samples60Hz[i] = (math.sin(phase) * 10000).round();
+      }
+      final input60HzBytes = Uint8List.view(samples60Hz.buffer);
+
+      // Warm up filter
+      processor.processPcmChunk(input60HzBytes);
+      final out60Hz = processor.processPcmChunk(input60HzBytes);
+      final rms60Hz = PcmResampler.calculateRmsLevel(out60Hz);
+
+      // Reset and test 1000Hz tone
+      processor.reset();
+      final samples1kHz = Int16List(1600);
+      for (var i = 0; i < 1600; i++) {
+        final phase = 2 * math.pi * 1000.0 * i / 16000.0;
+        samples1kHz[i] = (math.sin(phase) * 10000).round();
+      }
+      final input1kHzBytes = Uint8List.view(samples1kHz.buffer);
+
+      // Warm up filter
+      processor.processPcmChunk(input1kHzBytes);
+      final out1kHz = processor.processPcmChunk(input1kHzBytes);
+      final rms1kHz = PcmResampler.calculateRmsLevel(out1kHz);
+
+      // 60Hz must be attenuated significantly (measured ~18% of passband, > 14.5 dB down)
+      expect(rms60Hz, lessThan(rms1kHz * 0.25));
+    });
+
+    test('adaptive noise gate squelches quiet fan noise to silence', () {
+      final processor = AudioDenoiseProcessor(
+        speechThresholdRms: 0.015,
+        holdTimeMs: 200,
+      );
+
+      // Fan noise simulation: low amplitude uniform noise (RMS ~0.005)
+      final fanSamples = Int16List(3200); // 200ms
+      final rng = math.Random(42);
+      for (var i = 0; i < fanSamples.length; i++) {
+        fanSamples[i] = rng.nextInt(400) - 200;
+      }
+      final fanBytes = Uint8List.view(fanSamples.buffer);
+
+      // Process two chunks to let gate settle
+      processor.processPcmChunk(fanBytes);
+      final outFan = processor.processPcmChunk(fanBytes);
+      final fanOutRms = PcmResampler.calculateRmsLevel(outFan);
+
+      // Output should be completely squelched/silenced
+      expect(processor.isSpeechActive, isFalse);
+      expect(fanOutRms, lessThan(0.002));
+    });
+
+    test('voice signal opens noise gate and passes through', () {
+      final processor = AudioDenoiseProcessor(
+        speechThresholdRms: 0.012,
+        holdTimeMs: 280,
+      );
+
+      // Voice simulation: strong 500Hz sine tone (RMS ~0.15)
+      final voiceSamples = Int16List(3200);
+      for (var i = 0; i < voiceSamples.length; i++) {
+        final phase = 2 * math.pi * 500.0 * i / 16000.0;
+        voiceSamples[i] = (math.sin(phase) * 15000).round();
+      }
+      final voiceBytes = Uint8List.view(voiceSamples.buffer);
+
+      final outVoice = processor.processPcmChunk(voiceBytes);
+      final voiceOutRms = PcmResampler.calculateRmsLevel(outVoice);
+
+      expect(processor.isSpeechActive, isTrue);
+      expect(voiceOutRms, greaterThan(0.05));
+    });
+
+    test('gate maintains hold time during brief speech pauses', () {
+      final processor = AudioDenoiseProcessor(
+        speechThresholdRms: 0.012,
+        holdTimeMs: 280,
+      );
+
+      // 1. Speech burst (100ms = 1600 samples)
+      final voiceSamples = Int16List(1600);
+      for (var i = 0; i < voiceSamples.length; i++) {
+        final phase = 2 * math.pi * 400.0 * i / 16000.0;
+        voiceSamples[i] = (math.sin(phase) * 15000).round();
+      }
+      processor.processPcmChunk(Uint8List.view(voiceSamples.buffer));
+      expect(processor.isSpeechActive, isTrue);
+
+      // 2. 100ms of pause/quiet (1600 samples < 280ms hold time)
+      final quietSamples = Int16List(1600);
+      processor.processPcmChunk(Uint8List.view(quietSamples.buffer));
+      // Should still be active because of hold time!
+      expect(processor.isSpeechActive, isTrue);
+
+      // 3. Additional 300ms of quiet (4800 samples, exceeds remaining 180ms hold)
+      final extendedQuiet = Int16List(4800);
+      processor.processPcmChunk(Uint8List.view(extendedQuiet.buffer));
+      expect(processor.isSpeechActive, isFalse);
+    });
+
+    test('AudioCaptureService integrates denoiser and enables it by default', () {
+      final captureService = AudioCaptureService();
+      expect(captureService.denoiserEnabled, isTrue);
+      expect(captureService.denoiser, isNotNull);
+
+      captureService.setAcousticProcessing(denoiserEnabled: false);
+      expect(captureService.denoiserEnabled, isFalse);
+
+      captureService.setAcousticProcessing(denoiserEnabled: true);
+      expect(captureService.denoiserEnabled, isTrue);
     });
   });
 }

@@ -152,7 +152,11 @@ class Settings:
     )
     policy_path: Path = Path(os.environ.get("POLICY_PATH", str(ARTIFACTS_DIR / "policy.json")))
     model_cache_dir: Path = MODEL_CACHE_DIR
-    silence_rms: float = float(os.environ.get("SILENCE_RMS", "1e-4"))
+    # Minimum RMS threshold for an audio window to be treated as active speech.
+    # Set to 0.008 (~ -42 dBFS) so quiet room ambiance, ceiling fan rumble, and stationary
+    # HVAC motor whirr are classified as 'silence' (unavailable/standby), preventing
+    # deepfake acoustic models from running on non-speech noise and returning false 100% spoof alerts.
+    silence_rms: float = float(os.environ.get("SILENCE_RMS", "0.008"))
     clip_abs: float = float(os.environ.get("CLIP_ABS", "0.99"))
     clip_fraction: float = float(os.environ.get("CLIP_FRACTION", "0.01"))
     prefetch_models: bool = os.environ.get("PREFETCH_MODELS", "0") == "1"

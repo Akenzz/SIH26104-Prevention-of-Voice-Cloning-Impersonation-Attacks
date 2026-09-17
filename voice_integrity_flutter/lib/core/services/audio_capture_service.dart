@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
 
+import 'audio_denoise_processor.dart';
 import 'pcm_resampler.dart';
 
 enum AudioCaptureStatus {
@@ -17,22 +18,26 @@ enum AudioCaptureStatus {
 /// Service managing microphone capture in 16-bit PCM mono format at 16kHz.
 ///
 /// Features hardware echo cancellation (`echoCancel`) and noise suppression (`noiseSuppress`)
-/// enabled by default to prevent acoustic feedback loops between speaker and microphone
-/// during live demonstrations in the same physical room, while providing easy runtime toggles.
+/// enabled by default, configured with Android `voiceCommunication` source and telephony DSP.
+/// Also applies real-time `AudioDenoiseProcessor` (2nd order 120Hz Butterworth High-Pass Filter
+/// + adaptive hysteresis noise gate) to eliminate fan hum and silence false-positive AI detection.
 class AudioCaptureService {
   AudioCaptureService({
     AudioRecorder? recorder,
     bool echoCancel = true,
     bool noiseSuppress = true,
     bool autoGain = false,
+    AudioDenoiseProcessor? denoiser,
   })  : _recorderInstance = recorder,
         _echoCancel = echoCancel,
         _noiseSuppress = noiseSuppress,
-        _autoGain = autoGain;
+        _autoGain = autoGain,
+        _denoiser = denoiser ?? AudioDenoiseProcessor();
 
   AudioRecorder? _recorderInstance;
   AudioRecorder get _recorder => _recorderInstance ??= AudioRecorder();
   StreamSubscription<Uint8List>? _recordSubscription;
+  final AudioDenoiseProcessor _denoiser;
 
   final _pcmChunkController = StreamController<Uint8List>.broadcast();
   final _audioLevelController = StreamController<double>.broadcast();
@@ -60,16 +65,21 @@ class AudioCaptureService {
   bool get echoCancel => _echoCancel;
   bool get noiseSuppress => _noiseSuppress;
   bool get autoGain => _autoGain;
+  AudioDenoiseProcessor get denoiser => _denoiser;
+  bool get denoiserEnabled => _denoiser.enabled;
+  set denoiserEnabled(bool value) => _denoiser.enabled = value;
 
-  /// Configure hardware acoustic processing toggles.
+  /// Configure hardware acoustic processing toggles and software noise suppression.
   void setAcousticProcessing({
     bool? echoCancel,
     bool? noiseSuppress,
     bool? autoGain,
+    bool? denoiserEnabled,
   }) {
     if (echoCancel != null) _echoCancel = echoCancel;
     if (noiseSuppress != null) _noiseSuppress = noiseSuppress;
     if (autoGain != null) _autoGain = autoGain;
+    if (denoiserEnabled != null) _denoiser.enabled = denoiserEnabled;
   }
 
   void _setStatus(AudioCaptureStatus status, [String? error]) {
@@ -113,8 +123,8 @@ class AudioCaptureService {
     final useAutoGain = autoGain ?? _autoGain;
 
     try {
-      // Hardware echo cancellation and noise suppression enabled by default to eliminate
-      // acoustic feedback loop from receiver loudspeaker back into caller microphone in live demo rooms.
+      // Hardware echo cancellation and telephony noise suppression configured for voice communications
+      // to eliminate acoustic feedback loops and engage hardware noise suppression.
       final recordConfig = RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: 16000,
@@ -122,6 +132,10 @@ class AudioCaptureService {
         autoGain: useAutoGain,
         echoCancel: useEchoCancel,
         noiseSuppress: useNoiseSuppress,
+        androidConfig: const AndroidRecordConfig(
+          audioSource: AndroidAudioSource.voiceCommunication,
+          audioManagerMode: AudioManagerMode.modeInCommunication,
+        ),
       );
 
       final stream = await _recorder.startStream(recordConfig);
@@ -133,12 +147,15 @@ class AudioCaptureService {
           if (data.isEmpty) return;
 
           // Resample and ensure mono 16k if device emitted different rate
-          final processed = PcmResampler.processTo16kMono(
+          final resampled = PcmResampler.processTo16kMono(
             inputBytes: data,
             inputSampleRate: sampleRate,
             inputChannels: 1,
             targetSampleRate: 16000,
           );
+
+          // Apply real-time acoustic high-pass filter (120Hz) and adaptive hysteresis noise gate
+          final processed = _denoiser.processPcmChunk(resampled);
 
           // Calculate RMS level for visual VU meter with EMA smoothing
           final rawLevel = PcmResampler.calculateRmsLevel(processed);
@@ -185,6 +202,7 @@ class AudioCaptureService {
     } catch (e) {
       debugPrint('[AudioCaptureService] Stop error: $e');
     } finally {
+      _denoiser.reset();
       _currentLevel = 0.0;
       _audioLevelController.add(0.0);
       _setStatus(AudioCaptureStatus.idle);

@@ -368,6 +368,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   late final TextEditingController _wsHostController;
   late final TextEditingController _wsPortController;
   late bool _simulationMode;
+  late bool _denoiserEnabled;
 
   @override
   void initState() {
@@ -376,6 +377,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     _wsHostController = TextEditingController(text: widget.service.serverHost);
     _wsPortController = TextEditingController(text: '${widget.service.serverPort}');
     _simulationMode = widget.service.useSimulationMode;
+    _denoiserEnabled = widget.service.captureService.denoiserEnabled;
   }
 
   @override
@@ -404,6 +406,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     final port = int.tryParse(_wsPortController.text.trim()) ?? 443;
     widget.service.setServerEndpoint(host, port);
     widget.service.setSimulationMode(_simulationMode);
+    widget.service.captureService.denoiserEnabled = _denoiserEnabled;
     widget.onEndpointApplied(widget.endpointController.text);
     Navigator.of(context).pop();
   }
@@ -580,6 +583,28 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               value: _simulationMode,
               activeThumbColor: _ObsidianTheme.emerald,
               onChanged: (val) => setState(() => _simulationMode = val),
+            ),
+            const SizedBox(height: 12),
+
+            // Background Noise Cancellation & Fan Squelch toggle
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: const Text(
+                'Fan Squelch & Noise Cancellation',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: _ObsidianTheme.textPrimary,
+                ),
+              ),
+              subtitle: const Text(
+                'Hardware telephony DSP + 120Hz HPF & adaptive noise gate. Suppresses fan hum and prevents false clone alerts when silent.',
+                style: TextStyle(fontSize: 11, color: _ObsidianTheme.textMuted),
+              ),
+              value: _denoiserEnabled,
+              activeThumbColor: _ObsidianTheme.emerald,
+              onChanged: (val) => setState(() => _denoiserEnabled = val),
             ),
             const SizedBox(height: 14),
 

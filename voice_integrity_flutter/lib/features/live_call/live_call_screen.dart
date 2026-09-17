@@ -1749,6 +1749,7 @@ class _CallerTelemetryRack extends StatelessWidget {
 
     final metrics = [
       ('AUDIO ENCODING', '16 kHz Mono PCM'),
+      ('FAN SQUELCH', service.captureService.denoiserEnabled ? '120Hz HPF + VAD' : 'Bypassed'),
       ('UPLINK FRAMES', '${stats.packetsSent} sent'),
       ('DOWNLINK ECHO', '${stats.packetsReceived} rcvd'),
       ('PAYLOAD SIZE', '${(stats.bytesTransferred / 1024).toStringAsFixed(1)} KB'),
