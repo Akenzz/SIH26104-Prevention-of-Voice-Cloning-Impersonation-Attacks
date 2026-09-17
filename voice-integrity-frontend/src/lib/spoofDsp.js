@@ -188,6 +188,8 @@ class SpoofCaptureProcessor extends AudioWorkletProcessor {
     this.pitch = new PitchShifter();
     this.formant = new FormantFilter(sampleRate);
     this.artifacts = new ArtifactInjector(sampleRate);
+    this.buffer = new Float32Array(4096);
+    this.bufferPtr = 0;
     this._applyProfile(DEFAULT_PROFILE);
     this.port.onmessage = (e) => {
       const d = e.data || {};
@@ -196,6 +198,7 @@ class SpoofCaptureProcessor extends AudioWorkletProcessor {
         if (d.profile && PROFILES[d.profile]) this._applyProfile(d.profile);
       } else if (d.type === 'reset') {
         this.pitch.reset(); this.formant.reset(); this.artifacts.reset();
+        this.bufferPtr = 0;
       }
     };
   }
@@ -234,9 +237,14 @@ class SpoofCaptureProcessor extends AudioWorkletProcessor {
     if (input && input.length > 0) {
       const channelData = input[0];
       if (channelData) {
-        // postMessage without a transfer list copies, so the audio thread can
-        // safely reuse channelData; slice() on the clean path keeps that true.
-        this.port.postMessage(this.spoof ? this._convert(channelData) : channelData.slice());
+        const out = this.spoof ? this._convert(channelData) : channelData;
+        for (let i = 0; i < out.length; i++) {
+          this.buffer[this.bufferPtr++] = out[i];
+          if (this.bufferPtr >= this.buffer.length) {
+            this.port.postMessage(this.buffer.slice());
+            this.bufferPtr = 0;
+          }
+        }
       }
     }
     return true;

@@ -9,9 +9,9 @@ import { Spinner } from '../components/ui/Spinner';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 const FUSION_MODES = [
-  { key: 'heuristic_avg', label: 'Fused (Expert-1 + Expert-2)', dataKey: 'weighted_probability',          color: '#8b5cf6' },
-  { key: 'wavlm',         label: 'WavLM (MaxBR v6) Only',       dataKey: 'per_expert_probability.wavlm',        color: '#3b82f6' },
-  { key: 'hybrid_maxbr',  label: 'LFCC-LCNN Only',            dataKey: 'per_expert_probability.hybrid_maxbr', color: '#ec4899' },
+  { key: 'heuristic_avg', label: 'Fused (Expert-1 + Expert-2)', dataKey: 'weighted_probability', color: '#8b5cf6' },
+  { key: 'wavlm', label: 'WavLM (best_model_v6.pt)', dataKey: 'per_expert_probability.wavlm', color: '#3b82f6' },
+  { key: 'hybrid_maxbr', label: 'LFCC-LCNN Only', dataKey: 'per_expert_probability.hybrid_maxbr', color: '#ec4899' },
 ];
 
 export default function FileAnalysis() {
@@ -31,7 +31,7 @@ export default function FileAnalysis() {
       // auto-select whatever the backend is running
       const m = r.data?.fusion_mode;
       if (m && FUSION_MODES.find(f => f.key === m)) setSelectedMode(m);
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   // Aggregate a single expert's raw per-window logits into displayable stats.
@@ -97,7 +97,7 @@ export default function FileAnalysis() {
 
   const processFile = async () => {
     if (!file) return;
-    
+
     setIsProcessing(true);
     setError(null);
     setResult(null);
@@ -110,27 +110,27 @@ export default function FileAnalysis() {
         method: 'POST',
         body: formData,
       });
-      
+
       if (!response.ok) {
         throw new Error(`Server error: ${response.status}`);
       }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
-      
+
       let tempResult = { windows: [], summary: null };
       let buffer = '';
 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        
+
         buffer += decoder.decode(value, { stream: true });
         const events = buffer.split('\n\n');
-        
+
         // Keep the last partial event in the buffer
         buffer = events.pop() || '';
-        
+
         for (const event of events) {
           const lines = event.split('\n');
           for (const line of lines) {
@@ -141,7 +141,7 @@ export default function FileAnalysis() {
                 const data = JSON.parse(dataStr);
                 if (data.event === 'window_scored' || data.event === 'skipped' || data.event === 'quality_fail') {
                   tempResult.windows = [...tempResult.windows, data];
-                  
+
                   if (data.event === 'window_scored') {
                     tempResult.summary = {
                       overall_risk_state: 'collecting',
@@ -190,9 +190,8 @@ export default function FileAnalysis() {
       <Card>
         <CardContent>
           <div
-            className={`border-2 border-dashed rounded-lg p-10 flex flex-col items-center justify-center transition-colors cursor-pointer ${
-              isDragging ? 'border-zinc-500 bg-zinc-800/50' : 'border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/20'
-            }`}
+            className={`border-2 border-dashed rounded-lg p-10 flex flex-col items-center justify-center transition-colors cursor-pointer ${isDragging ? 'border-zinc-500 bg-zinc-800/50' : 'border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/20'
+              }`}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
             onDragOver={handleDrag}
@@ -206,7 +205,7 @@ export default function FileAnalysis() {
               accept="audio/*"
               className="hidden"
             />
-            
+
             {file ? (
               <div className="flex flex-col items-center gap-3">
                 <div className="h-16 w-16 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-300">
@@ -229,15 +228,15 @@ export default function FileAnalysis() {
               </div>
             )}
           </div>
-          
+
           <div className="mt-4 flex justify-end gap-3">
             {file && (
               <Button variant="ghost" onClick={() => { setFile(null); setResult(null); }}>
                 Clear
               </Button>
             )}
-            <Button 
-              variant="primary" 
+            <Button
+              variant="primary"
               onClick={(e) => { e.stopPropagation(); processFile(); }}
               disabled={!file}
               isLoading={isProcessing}
@@ -261,14 +260,14 @@ export default function FileAnalysis() {
       {result && result.summary && (
         <div className="space-y-6">
           <h2 className="text-lg font-medium text-zinc-100 flex items-center gap-2">
-            <BarChart3 size={20} className="text-zinc-400"/> Analysis Results
+            <BarChart3 size={20} className="text-zinc-400" /> Analysis Results
           </h2>
 
           {/* ── Verdict Hero Card ── */}
           {(() => {
             const s = result.summary;
             const prob = s.weighted_spoof_probability ?? s.max_probability ?? s.final_smoothed_probability ?? 0;
-            const pct  = (prob * 100).toFixed(1);
+            const pct = (prob * 100).toFixed(1);
             const state = s.overall_risk_state;
             const isFake = state === 'spoof' || state === 'high';
             const isReal = state === 'bonafide' || state === 'low';
@@ -277,13 +276,13 @@ export default function FileAnalysis() {
             const VerdictIcon = isCollecting ? Activity : isFake ? XCircle : isReal ? CheckCircle : AlertTriangle;
             const verdictLabel = isCollecting ? 'ANALYZING...' : isFake ? 'AI GENERATED (SPOOF)' : isReal ? 'HUMAN VOICE (REAL)' : 'UNCLEAR / SUSPICIOUS';
             const verdictColor = isCollecting ? '#3b82f6' : isFake ? '#dc2626' : isReal ? '#16a34a' : '#d97706';
-            const barColor    = prob > 0.65 ? '#dc2626' : prob > 0.35 ? '#d97706' : '#16a34a';
+            const barColor = prob > 0.65 ? '#dc2626' : prob > 0.35 ? '#d97706' : '#16a34a';
 
             const agreementMap = {
-              unanimous_spoof:    { label: 'Unanimous - All models say AI',  color: '#dc2626' },
-              unanimous_bonafide: { label: 'Unanimous - All models say HUMAN',  color: '#16a34a' },
-              majority_spoof:     { label: 'Majority vote - Likely AI',       color: '#d97706' },
-              majority_bonafide:  { label: 'Majority vote - Likely HUMAN',       color: '#65a30d' },
+              unanimous_spoof: { label: 'Unanimous - All models say AI', color: '#dc2626' },
+              unanimous_bonafide: { label: 'Unanimous - All models say HUMAN', color: '#16a34a' },
+              majority_spoof: { label: 'Majority vote - Likely AI', color: '#d97706' },
+              majority_bonafide: { label: 'Majority vote - Likely HUMAN', color: '#65a30d' },
             };
             const agInfo = agreementMap[s.agreement] || { label: s.agreement || 'N/A', color: '#71717a' };
             const confColor = { high: '#16a34a', medium: '#d97706', low: '#dc2626' }[s.confidence_level] || '#71717a';
@@ -354,11 +353,11 @@ export default function FileAnalysis() {
                 {expertList().map((e) => {
                   const expert = e.name;
                   const isOpen = expandedExpert === expert;
-                  const stats  = isOpen ? expertStats(expert) : null;
-                  const prob   = typeof e.probability === 'number' ? e.probability : null;
-                  const pct    = prob != null ? (prob * 100).toFixed(1) : null;
+                  const stats = isOpen ? expertStats(expert) : null;
+                  const prob = typeof e.probability === 'number' ? e.probability : null;
+                  const pct = prob != null ? (prob * 100).toFixed(1) : null;
                   const barClr = prob > 0.65 ? '#ef4444' : prob > 0.35 ? '#f97316' : '#22c55e';
-                  const expertWeights = { wavlm: 50, hybrid_maxbr: 50 };
+                  const expertWeights = { wavlm: 25, hybrid_maxbr: 75 };
                   const weight = expertWeights[expert];
 
                   return (
@@ -439,11 +438,10 @@ export default function FileAnalysis() {
                   <button
                     key={m.key}
                     onClick={() => setSelectedMode(m.key)}
-                    className={`w-full px-3 py-2 rounded-lg text-left text-xs font-semibold transition-all border ${
-                      selectedMode === m.key
+                    className={`w-full px-3 py-2 rounded-lg text-left text-xs font-semibold transition-all border ${selectedMode === m.key
                         ? 'border-transparent text-zinc-950'
                         : 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
-                    }`}
+                      }`}
                     style={selectedMode === m.key ? { backgroundColor: m.color } : {}}
                   >
                     {m.label}
@@ -486,9 +484,9 @@ export default function FileAnalysis() {
                     <ReferenceLine y={0.35} stroke="#10b981" strokeDasharray="3 3" opacity={0.3} />
                     <ReferenceLine y={0.65} stroke="#ef4444" strokeDasharray="3 3" opacity={0.3} />
 
-                    <Line type="monotone" dataKey="per_expert_probability.wavlm"        name="WavLM (MaxBR v6)"    stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'wavlm'        ? 0 : 0.45} />
-                    <Line type="monotone" dataKey="per_expert_probability.hybrid_maxbr"  name="LFCC-Max"   stroke="#ec4899" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'hybrid_maxbr' ? 0 : 0.45} />
-                    <Line type="monotone" dataKey="weighted_probability"          name="Weighted Avg" stroke="#f97316" strokeWidth={1.5} strokeDasharray="4 4" dot={false} opacity={selectedMode === 'heuristic_avg' ? 0 : 0.45} />
+                    <Line type="monotone" dataKey="per_expert_probability.wavlm" name="WavLM (MaxBR v6)" stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'wavlm' ? 0 : 0.45} />
+                    <Line type="monotone" dataKey="per_expert_probability.hybrid_maxbr" name="LFCC-Max" stroke="#ec4899" strokeWidth={1.5} strokeDasharray="5 5" dot={false} opacity={selectedMode === 'hybrid_maxbr' ? 0 : 0.45} />
+                    <Line type="monotone" dataKey="weighted_probability" name="Weighted Avg" stroke="#f97316" strokeWidth={1.5} strokeDasharray="4 4" dot={false} opacity={selectedMode === 'heuristic_avg' ? 0 : 0.45} />
 
                     {/* Selected mode promoted to bold white primary line */}
                     {(() => {

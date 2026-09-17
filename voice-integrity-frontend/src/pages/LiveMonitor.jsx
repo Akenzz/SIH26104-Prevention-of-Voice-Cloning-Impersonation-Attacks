@@ -121,8 +121,15 @@ export default function LiveMonitor() {
       setError(null);
       setStatus('connecting');
 
-      // 1. Get Microphone
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true } });
+      // 1. Get Microphone (disable all browser processing so phone playback isn't muted)
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: { 
+          channelCount: 1, 
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        } 
+      });
       mediaStreamRef.current = stream;
 
       // 2. Setup AudioContext (we'll let it pick the default device rate, backend will resample)

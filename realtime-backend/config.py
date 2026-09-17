@@ -40,7 +40,7 @@ MODEL_CACHE_DIR = Path(os.environ.get("MODEL_CACHE_DIR", str(ROOT / "model_cache
 
 TARGET_SAMPLE_RATE = 16000
 WINDOW_SEC = float(os.environ.get("WINDOW_SEC", "4.0"))
-HOP_SEC = float(os.environ.get("HOP_SEC", "0.5"))
+HOP_SEC = float(os.environ.get("HOP_SEC", "4.0"))
 
 # Checkpoints are pulled from Hugging Face on first use and cached under
 # model_cache/. experts/hub.py short-circuits when the file already exists, so a
@@ -104,7 +104,7 @@ HUB_EXPERTS = {
 # Human-facing labels for the frontend, so the UI never has to hardcode names.
 # ASCII only — these are echoed straight into JSON.
 EXPERT_LABELS = {
-    "wavlm":       "Expert-1: WavLM Base+ (MaxBR v6)",
+    "wavlm":       "Expert-1: WavLM (wavlm_maxbr_best.pt)",
     "hybrid":      "Expert-2: LFCC-LCNN Hybrid",
     "hybrid_maxbr": "Expert-3: LFCC-LCNN Max (132 generators, bandwidth-robust)",
 }
@@ -153,10 +153,10 @@ class Settings:
     policy_path: Path = Path(os.environ.get("POLICY_PATH", str(ARTIFACTS_DIR / "policy.json")))
     model_cache_dir: Path = MODEL_CACHE_DIR
     # Minimum RMS threshold for an audio window to be treated as active speech.
-    # Set to 0.008 (~ -42 dBFS) so quiet room ambiance, ceiling fan rumble, and stationary
+    # Set to 0.01 (~ -40 dBFS) so quiet room ambiance, ceiling fan rumble, and stationary
     # HVAC motor whirr are classified as 'silence' (unavailable/standby), preventing
     # deepfake acoustic models from running on non-speech noise and returning false 100% spoof alerts.
-    silence_rms: float = float(os.environ.get("SILENCE_RMS", "0.008"))
+    silence_rms: float = float(os.environ.get("SILENCE_RMS", "0.01"))
     clip_abs: float = float(os.environ.get("CLIP_ABS", "0.99"))
     clip_fraction: float = float(os.environ.get("CLIP_FRACTION", "0.01"))
     prefetch_models: bool = os.environ.get("PREFETCH_MODELS", "0") == "1"

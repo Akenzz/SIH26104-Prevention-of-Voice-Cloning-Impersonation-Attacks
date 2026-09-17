@@ -202,7 +202,7 @@ def health() -> JSONResponse:
             "decision_expert": settings.single_expert,
             "decision_label": {
                 "lr_fusion": "LR Fusion (WavLM + LFCC)",
-                "heuristic_avg": "50% WavLM + 50% LFCC-LCNN Hybrid",
+                "heuristic_avg": "25% WavLM + 75% LFCC-LCNN Hybrid",
                 "heuristic": "WavLM + LFCC Heuristic",
                 "single": EXPERT_LABELS.get(settings.single_expert, settings.single_expert),
             }.get(settings.fusion_mode, settings.fusion_mode),
@@ -289,7 +289,7 @@ async def predict_file(file: UploadFile = File(...)):
             # Probability-space fusion, identical to optimize_weights.py. Applied to
             # both the rolling (displayed) probs and the raw (verdict) probs so the
             # two paths differ only in their smoothing, not in their fusion.
-            W_WAVLM, W_LFCC = 0.50, 0.50
+            W_WAVLM, W_LFCC = 0.25, 0.75
 
             def fuse_probs(prob_map: dict[str, float]) -> float:
                 p_w = prob_map.get("wavlm", 0.0)

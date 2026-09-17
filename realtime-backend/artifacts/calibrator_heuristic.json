@@ -1,9 +1,0 @@
-{
-  "version": "calibrator_heuristic_v1",
-  "kind": "identity_sigmoid",
-  "a": 1.0,
-  "b": 0.0,
-  "metadata": {
-    "description": "Dummy calibrator that maps the LFCC+SSL+5.0 heuristic logit directly through a standard sigmoid function."
-  }
-}

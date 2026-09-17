@@ -156,8 +156,10 @@ def process_single_window(
         )
         l_l = float(scores[lfcc_key]["logit"]) if lfcc_key else 0.0
 
-        # 2-expert lineup: 50% WavLM + 50% LFCC-LCNN (TakHemlata SSL decommissioned)
-        W_WAVLM, W_LFCC = 0.50, 0.50
+        # Weight by reliability: LFCC dev EER ~10% vs WavLM ~15%.
+        # WavLM still contributes (catches SSL-based fakes LFCC misses) but
+        # doesn't dominate the headline score when it oscillates on bonafide.
+        W_WAVLM, W_LFCC = 0.25, 0.75
         experts_present = (
             ("wavlm" in scores) * W_WAVLM +
             (lfcc_key is not None) * W_LFCC
@@ -218,13 +220,31 @@ class ConnectionState:
     windows_scored: int = 0
     resample_warned: bool = False
     started: bool = False
+    # Rolling buffer of raw WavLM logits for median smoothing.
+    # We keep the last _WAVLM_MEDIAN_N raw logits and pass the median to
+    # the calibrator instead of the single-window logit, which eliminates
+    # outlier spikes without losing genuine trend changes.
+    wavlm_logit_buf: list[float] = field(default_factory=list)
+
+    # WavLM (dev EER ~15%) is noisier window-to-window than LFCC (dev EER ~10%).
+    # alpha=0.08 gives an effective smoothing window of ~1/0.08 = 12 windows = 6s,
+    # which damps single-window outliers without losing long-term trend tracking.
+    _WAVLM_EMA_ALPHA = 0.08
+    # Median window over this many raw WavLM logits before Platt calibration.
+    # 8 windows × 0.5s hop = 4s of evidence; median is immune to single-window
+    # outliers that EMA only dampens.  Min 1 so the first window still scores.
+    _WAVLM_MEDIAN_N  = 8
 
     def __post_init__(self) -> None:
         self.ema = ExponentialMovingAverage(self.settings.ema_alpha)
         self.lr_ema = ExponentialMovingAverage(self.settings.ema_alpha)
         self.expert_emas = {
-            name: ExponentialMovingAverage(self.settings.ema_alpha) for name in self.experts
+            name: ExponentialMovingAverage(
+                self._WAVLM_EMA_ALPHA if name == "wavlm" else self.settings.ema_alpha
+            )
+            for name in self.experts
         }
+        self.wavlm_logit_buf = []
 
     def apply_start(self, payload: dict[str, Any]) -> dict[str, Any]:
         sample_rate = int(payload.get("sample_rate") or payload.get("sampleRate") or 0)
@@ -249,6 +269,7 @@ class ConnectionState:
         self.lr_ema.reset()
         for e in self.expert_emas.values():
             e.reset()
+        self.wavlm_logit_buf.clear()
         self.out_seq = 0
         self.windows_scored = 0
         self.resample_warned = False
@@ -424,6 +445,7 @@ class ConnectionState:
         self.lr_ema.reset()
         for e in self.expert_emas.values():
             e.reset()
+        self.wavlm_logit_buf.clear()
         self.windows_scored = 0
 
     def _score_window(
@@ -433,12 +455,48 @@ class ConnectionState:
         *,
         dropped_frames: bool,
     ) -> dict[str, Any]:
+        # ── WavLM median smoothing ────────────────────────────────────────────
+        # Score WavLM first in isolation so we can apply a rolling median to
+        # its raw logit before the fused pipeline sees it.  The median of the
+        # last N windows is immune to single-window outliers in a way that EMA
+        # only dampens; it's the right tool for a 15% EER model.
+        if "wavlm" in self.experts:
+            try:
+                raw_wavlm_score = self.experts["wavlm"].score(window)
+                raw_logit = float(raw_wavlm_score["logit"])
+                self.wavlm_logit_buf.append(raw_logit)
+                if len(self.wavlm_logit_buf) > self._WAVLM_MEDIAN_N:
+                    self.wavlm_logit_buf.pop(0)
+                median_logit = float(np.median(self.wavlm_logit_buf))
+                # Inject the smoothed logit so process_single_window uses it
+                # without knowing about the buffer — expert.score() won't be
+                # called again for wavlm inside process_single_window.
+                _wavlm_override = dict(raw_wavlm_score)
+                _wavlm_override["logit"] = median_logit
+            except Exception:
+                _wavlm_override = None
+        else:
+            _wavlm_override = None
+
+        # Build a thin expert shim so process_single_window gets the median logit
+        # for wavlm while still calling the real model for all other experts.
+        _experts = self.experts
+        if _wavlm_override is not None:
+            class _CachedExpert:
+                """Returns a pre-computed score without re-running the model."""
+                name = "wavlm"
+                model_version = _wavlm_override.get("model_version", "wavlm")
+                _score = _wavlm_override
+                def score(self, _w):
+                    return self._score
+            _experts = {**self.experts, "wavlm": _CachedExpert()}
+
         # process_single_window decides with the RAW probability; we re-decide
         # below with the EMA-smoothed one, which is what the contract reports.
         result = process_single_window(
             window=window,
             settings=self.settings,
-            experts=self.experts,
+            experts=_experts,          # WavLM logit already median-smoothed
             fusion=self.fusion,
             calibrator=self.calibrator,
             policy=self.policy,
