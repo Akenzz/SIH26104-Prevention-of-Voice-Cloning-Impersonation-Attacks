@@ -360,9 +360,25 @@ sequenceDiagram
 
 ## Screenshots & Demo
 
-> 📸 *Add product screenshot here (Live Monitor Dashboard showing live probability graph)*
+### Live Monitor Dashboard
 
-> 📸 *Add product screenshot here (Flutter Mobile App UI showing risk banner)*
+<div align="center">
+  <img
+    src="assets/sitepreview.png"
+    alt="Voice Integrity Live Monitor Dashboard"
+    width="100%"
+  />
+</div>
+
+### Flutter Mobile App
+
+<div align="center">
+  <img
+    src="assets/apppreview.png"
+    alt="Voice Integrity Flutter Mobile App"
+    width="50%"
+  />
+</div>
 
 ---
 
