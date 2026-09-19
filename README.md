@@ -505,20 +505,32 @@ Pre-trained weights and Platt calibration mappings are loaded directly from Hugg
 The decision pipeline translates raw neural outputs into a human-readable risk policy in real-time.
 
 ```mermaid
-graph TD
+flowchart TD
+
     classDef logic fill:#1E293B,stroke:#475569,stroke-width:2px,color:#F8FAFC
     classDef decision fill:#6366F1,stroke:#A5B4FC,stroke-width:2px,color:#F8FAFC
     classDef output fill:#B91C1C,stroke:#FCA5A5,stroke-width:2px,color:#F8FAFC
 
-    Raw[Raw Logits: WavLM & LFCC]:::logic --> Median[WavLM 8-Window Median Smoothing]:::logic
-    Median --> Fusion[Heuristic Fusion<br>0.75 LFCC + 0.25 WavLM]:::logic
-    Fusion --> Platt[Platt Scaling Calibration]:::decision
-    Platt --> EMA[EMA Smoothing alpha=0.3]:::decision
-    EMA --> Thresholds{Policy Thresholds}:::decision
-    
-    Thresholds -->|p < 0.35| Low[LOW RISK<br>Verified Human]:::output
-    Thresholds -->|0.35 ≤ p < 0.65| Unc[UNCERTAIN<br>Degraded Audio]:::output
-    Thresholds -->|p ≥ 0.65| High[HIGH RISK<br>Likely Spoof]:::output
+    Raw["Raw Logits: WavLM & LFCC"]:::logic
+    Median["WavLM 8-Window Median Smoothing"]:::logic
+    Fusion["Heuristic Fusion<br/>0.75 LFCC + 0.25 WavLM"]:::logic
+    Platt["Platt Scaling Calibration"]:::decision
+    EMA["EMA Smoothing<br/>α = 0.3"]:::decision
+    Thresholds{"Policy Thresholds"}:::decision
+
+    Low["LOW RISK<br/>Verified Human"]:::output
+    Unc["UNCERTAIN<br/>Degraded Audio"]:::output
+    High["HIGH RISK<br/>Likely Spoof"]:::output
+
+    Raw --> Median
+    Median --> Fusion
+    Fusion --> Platt
+    Platt --> EMA
+    EMA --> Thresholds
+
+    Thresholds -->|"p < 0.35"| Low
+    Thresholds -->|"0.35 ≤ p < 0.65"| Unc
+    Thresholds -->|"p ≥ 0.65"| High
 ```
 
 ---
