@@ -374,7 +374,7 @@ sequenceDiagram
 
 <div align="center">
   <img
-    src="assets/apppreview.png"
+    src="assets/apppreview.jpeg"
     alt="Voice Integrity Flutter Mobile App"
     width="50%"
   />
