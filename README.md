@@ -2,46 +2,103 @@
   <h1>Voice Integrity</h1>
   <p><b>Real-time detection of AI voice cloning and impersonation attacks for live communication.</b></p>
   
-  [![Deployment](https://img.shields.io/badge/Deployment-Live-brightgreen)](https://voicenow.vercel.app)
-  [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-  [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20Android%20%7C%20iOS-lightgrey)]()
-  
   <br>
 
   [**Live Demo**](https://voicenow.vercel.app) · 
-  [**Documentation**](#table-of-contents) · 
-  [**Hugging Face (WavLM)**](https://huggingface.co/sarosh22/wavLM-Hybrid) · 
-  [**Hugging Face (LFCC)**](https://huggingface.co/sarosh22/Final_LFCC) ·
-  [**GitHub**](https://github.com/Akenzz/SIH26104-Prevention-of-Voice-Cloning-Impersonation-Attacks)
+  [**WavLM Expert Model**](https://huggingface.co/sarosh22/wavLM-Hybrid) · 
+  [**LFCC Expert Model**](https://huggingface.co/sarosh22/Final_LFCC) ·
+  [**GitHub Repository**](https://github.com/Akenzz/SIH26104-Prevention-of-Voice-Cloning-Impersonation-Attacks)
 </div>
 
-<hr>
+<br>
+
+<div align="center">
+  <img
+    src="assets/landing-page.png"
+    alt="Voice Integrity Landing Page"
+    width="100%"
+  />
+</div>
+
+<br>
+
+---
+
+## Quick Start
+
+### Try the Live Product
+[voicenow.vercel.app](https://voicenow.vercel.app)
+
+### Run Locally
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/Akenzz/SIH26104-Prevention-of-Voice-Cloning-Impersonation-Attacks.git
+   cd SIH26104-Prevention-of-Voice-Cloning-Impersonation-Attacks
+   ```
+2. **Start all services**:
+   ```bash
+   ./run_all.sh
+   ```
+
+*(See the detailed [Installation](#installation) section for manual execution and Docker setups).*
+
+---
+
+## System at a Glance
+
+```mermaid
+graph LR
+    classDef main fill:#0F172A,stroke:#38BDF8,stroke-width:2px,color:#F8FAFC
+    classDef process fill:#334155,stroke:#94A3B8,stroke-width:2px,color:#F8FAFC
+
+    Audio[Live Audio Stream]:::main --> Relay[Audio Relay]:::process
+    Relay --> VAD[Resampling + VAD]:::process
+    VAD --> Window[Rolling Audio Window]:::process
+    Window --> WavLM[WavLM Base+]:::process
+    Window --> LFCC[LFCC-LCNN]:::process
+    WavLM --> Fusion[Logit Fusion]:::process
+    LFCC --> Fusion
+    Fusion --> Calib[Calibration & EMA Smoothing]:::process
+    Calib --> Policy[Risk Policy]:::process
+    Policy --> Result[Detection Result]:::main
+```
+
+---
 
 ## Table of Contents
 
 1. [Executive Overview](#executive-overview)
 2. [Problem Statement](#problem-statement)
 3. [Solution](#solution)
-4. [Key Capabilities](#key-capabilities)
-5. [Product Flow](#product-flow)
-6. [System Architecture](#system-architecture)
-7. [Inference Sequence](#inference-sequence)
-8. [Technology Stack](#technology-stack)
-9. [Screenshots & Demo](#screenshots--demo)
-10. [AI / ML Architecture](#ai--ml-architecture)
-11. [Voice Processing Pipeline](#voice-processing-pipeline)
-12. [Model Architecture](#model-architecture)
-13. [Training Pipeline](#training-pipeline)
-14. [Dataset](#dataset)
-15. [Evaluation](#evaluation)
-16. [Model Artifacts](#model-artifacts)
-17. [Why This Architecture?](#why-this-architecture)
-18. [Inference Details](#inference-details)
-19. [Prerequisites](#prerequisites)
-20. [Installation](#installation)
-21. [Environment Variables](#environment-variables)
-22. [Running Locally](#running-locally)
-23. [API Documentation](#api-documentation)
+4. [Current Status](#current-status)
+5. [Key Capabilities](#key-capabilities)
+6. [Repository Structure](#repository-structure)
+7. [Product Flow](#product-flow)
+8. [System Architecture](#system-architecture)
+9. [Deployment Architecture](#deployment-architecture)
+10. [Scalability](#scalability)
+11. [Inference Sequence](#inference-sequence)
+12. [Technology Stack](#technology-stack)
+13. [Screenshots & Demo](#screenshots--demo)
+14. [AI / ML Architecture](#ai--ml-architecture)
+15. [Voice Processing Pipeline](#voice-processing-pipeline)
+16. [Model Architecture](#model-architecture)
+17. [Training Pipeline](#training-pipeline)
+18. [Dataset](#dataset)
+19. [Evaluation](#evaluation)
+20. [Model Artifacts](#model-artifacts)
+21. [Why This Architecture?](#why-this-architecture)
+22. [Inference Details](#inference-details)
+23. [Offline & On-Device Inference](#offline--on-device-inference)
+24. [Security & Privacy](#security--privacy)
+25. [Limitations](#limitations)
+26. [Roadmap](#roadmap)
+27. [Prerequisites](#prerequisites)
+28. [Installation](#installation)
+29. [Environment Variables](#environment-variables)
+30. [Running Locally](#running-locally)
+31. [API Documentation](#api-documentation)
 
 ---
 
@@ -79,6 +136,21 @@ Voice Integrity acts as an active middleware interceptor. It addresses the real-
 
 ---
 
+## Current Status
+
+| Component | Status |
+|---|---|
+| Web Application | 🟢 Implemented |
+| Realtime Backend | 🟢 Implemented |
+| Dual-Model Inference | 🟢 Implemented |
+| Training Pipeline | 🟢 Implemented |
+| Mobile Application | 🟢 Implemented |
+| Offline Inference | 🔵 Planned / In Development |
+| Blockchain Audit Log | 🔵 Planned |
+| On-Device Mobile Inference | 🔵 Planned |
+
+---
+
 ## Key Capabilities
 
 | Capability | Description | Status |
@@ -91,6 +163,23 @@ Voice Integrity acts as an active middleware interceptor. It addresses the real-
 | **MockRVC AudioWorklet** | Runs pitch/formant warping directly in-browser to simulate live spoofing attacks without secondary hardware. | 🟢 Active |
 | **Blockchain Audit Log** | Tamper-evident hash chain of verified call signatures and historical risk scores. | 🔴 Planned |
 | **On-Device Mobile Inference** | Running the ML models natively on Android/iOS via TFLite/ONNX to eliminate network latency. | 🔴 Planned |
+
+---
+
+## Repository Structure
+
+```text
+├── data_pipeline/             # Dataset generation and manifest creation scripts
+├── lfcc-detector/             # LFCC-LCNN training, gating, and extraction logic
+├── realtime-backend/          # FastAPI WebSocket server for dual-expert inference
+├── relay-service/             # Audio middleware for crossfading and mock networks
+├── testdata/                  # Sample audio for offline evaluation tests
+├── voice-integrity-frontend/  # React/Vite dashboard for live monitoring
+├── voice_integrity_flutter/   # Flutter mobile application
+├── wavlm-base-plus/           # WavLM classification head training scripts
+├── run_all.sh                 # One-click start script for local development
+└── docker-compose.yml         # Containerized multi-service deployment
+```
 
 ---
 
@@ -178,6 +267,52 @@ graph TD
     RelayWS --> Flutter
     RelayWS --> React
 ```
+
+---
+
+## Deployment Architecture
+
+### Current Implementation
+The current repository utilizes a localized, tightly-coupled microservice architecture designed for a single compute node (or local development). The `relay-service` acts as a mock telephony network, forwarding raw PCM chunks to the `realtime-backend`, which loads both PyTorch experts directly into unified process memory and processes requests sequentially per WebSocket connection.
+
+### Production-Scale Architecture
+For enterprise deployment (e.g., telecom integrations handling 1,000+ concurrent calls), the architecture must evolve to decouple audio ingestion from model inference. 
+
+*(This represents proposed future infrastructure, not currently implemented in this repository).*
+
+```mermaid
+graph TD
+    classDef default fill:#1E293B,stroke:#475569,stroke-width:2px,color:#F8FAFC
+    classDef infra fill:#0F172A,stroke:#38BDF8,stroke-width:2px,color:#F8FAFC
+    classDef model fill:#059669,stroke:#34D399,stroke-width:2px,color:#F8FAFC
+
+    LoadBalancer[Layer 4 Load Balancer]:::infra --> Gateway1[WebSocket Gateway 1]:::infra
+    LoadBalancer --> GatewayN[WebSocket Gateway N]:::infra
+    
+    Gateway1 --> RedisQueue[(Redis / Kafka Audio Chunk Stream)]:::infra
+    GatewayN --> RedisQueue
+    
+    RedisQueue --> InferenceWorker1[GPU Inference Worker]:::model
+    RedisQueue --> InferenceWorkerN[GPU Inference Worker]:::model
+    
+    InferenceWorker1 --> DB[(TimescaleDB Risk Storage)]:::infra
+    InferenceWorker1 --> PubSub[Pub/Sub Telemetry]:::infra
+    
+    PubSub --> Dashboard[Enterprise Dashboard]:::infra
+```
+
+---
+
+## Scalability
+
+### CURRENT
+The system currently scales vertically. The backend is bound by the processing speed of the WavLM Base+ transformer. On a modern CPU (`DEVICE=cpu`), processing a 4-second chunk takes ~150-300ms. On an NVIDIA GPU (`DEVICE=cuda`), this drops to <30ms, allowing a single backend instance to handle ~30-50 concurrent audio streams before running into Python Global Interpreter Lock (GIL) and WebSocket I/O bottlenecks.
+
+### FUTURE SCALE-UP
+To achieve true horizontal scalability:
+* **Decoupled Model Serving**: Move PyTorch models out of the FastAPI process and into dedicated Triton Inference Servers or TorchServe containers.
+* **Queue-Based Processing**: Replace direct WebSocket-to-Model synchronous calls with a high-throughput message broker (like Kafka or Redis Streams) to buffer audio chunks during traffic spikes.
+* **Stateless Gateways**: Terminate WebSocket connections at a horizontally scaled, stateless Node.js/Go gateway layer that only handles routing, pushing raw audio to the internal broker.
 
 ---
 
@@ -323,10 +458,12 @@ The training corpus consists of **84,271 VAD-filtered audio chunks** across 6 la
 
 Metrics are logged strictly on held-out speakers and unseen generators to reflect true zero-day defense capability.
 
-* **WavLM Dev EER**: **1.50%** (Equal Error Rate on held-out Platt calibration dev split).
-* **LFCC In-Domain EER**: **7.44%** (Equal Error Rate on held-out speakers, seen generators).
-* **Spoof Recall (Zero-Day Generalization)**: **91.5%** recall with only **1.7% False Alarms** across 25 completely unseen spoof generators (`eval_ood` split) using the deployed `p >= 0.65` threshold.
-* **Hard-Negative Limitation**: The model struggles with certain ultra-high fidelity systems like Optispeech (26.9% recall), defining the upper boundary of our current zero-day detection capability.
+| Evaluation Metric | Target Data Split | Measured Result | Context |
+|---|---|---:|---|
+| **WavLM Dev EER** | Platt calibration dev split | **1.50%** | Baseline representation model error rate |
+| **LFCC In-Domain EER** | Held-out speakers, seen generators | **7.44%** | Accuracy of the linear frequency backbone |
+| **Spoof Recall (Zero-Day)** | `eval_ood` (25 unseen generators) | **91.5%** | Evaluated using the deployed `p >= 0.65` threshold with a False Alarm rate of only **1.7%** |
+| **Hard-Negative Constraint** | Optispeech / Ultra-high fidelity | **26.9%** | Represents the upper boundary of current zero-day capability |
 
 ---
 
@@ -336,7 +473,6 @@ Pre-trained weights and Platt calibration mappings are loaded directly from Hugg
 
 * **WavLM Expert**: [sarosh22/wavLM-Hybrid](https://huggingface.co/sarosh22/wavLM-Hybrid)
 * **LFCC Expert**: [sarosh22/Final_LFCC](https://huggingface.co/sarosh22/Final_LFCC)
-* **Organization**: [Akenzz Hugging Face Space](https://huggingface.co/Akenzz)
 
 ---
 
@@ -368,6 +504,80 @@ graph TD
     Thresholds -->|0.35 ≤ p < 0.65| Unc[UNCERTAIN<br>Degraded Audio]:::output
     Thresholds -->|p ≥ 0.65| High[HIGH RISK<br>Likely Spoof]:::output
 ```
+
+---
+
+## Offline & On-Device Inference
+
+### Current Status
+The current implementation **strictly requires backend network connectivity**. Inference is performed on the `realtime-backend` Python server, meaning the frontend/mobile app must stream raw audio over WebSockets continuously. 
+
+### Why On-Device Inference Is Feasible
+Deepfake detection traditionally requires massive, centralized compute. However, the dual-expert architecture of Voice Integrity is highly compressible:
+1. The **LFCC-LCNN** model is exceptionally lightweight, operating primarily on 1D convolutions over extracted frequency features. 
+2. The **WavLM** model can be quantized (INT8) or replaced entirely with a distilled student model for edge deployments.
+
+Moving inference directly to the mobile device (Edge AI) would eliminate network latency, significantly reduce cloud compute costs, and completely protect user privacy by never transmitting raw voice data.
+
+### Potential Architecture
+*(Proposed implementation for future mobile releases)*
+
+```mermaid
+graph TD
+    classDef default fill:#1E293B,stroke:#475569,stroke-width:2px,color:#F8FAFC
+    classDef local fill:#334155,stroke:#94A3B8,stroke-width:2px,color:#F8FAFC
+    classDef model fill:#059669,stroke:#34D399,stroke-width:2px,color:#F8FAFC
+
+    App[Flutter Mobile App]:::local --> AudioCapture[Native Audio Isolate]:::local
+    AudioCapture --> LocalVAD[On-Device VAD]:::local
+    LocalVAD --> TFLite[TensorFlow Lite / ONNX Runtime]:::model
+    
+    TFLite --> OptimizedLFCC[Quantized LFCC Expert]:::model
+    TFLite --> OptimizedWavLM[Distilled WavLM Expert]:::model
+    
+    OptimizedLFCC --> Fusion[Local Fusion Logic]:::local
+    OptimizedWavLM --> Fusion
+    
+    Fusion --> RiskBanner[Local UI Banner]:::local
+```
+
+---
+
+## Security & Privacy
+
+### Current Security Measures
+* **Ephemeral Audio**: The `realtime-backend` and `relay-service` process audio exclusively in memory (RAM) via a rolling 4-second `RingBuffer`. Audio chunks are continuously overwritten and are **never written to disk**.
+* **Environment Variables**: Sensitive keys (like `GROQ_API_KEY`) are managed strictly through `.env` files and are never hardcoded or exposed to the client interface.
+
+### Production Security Considerations
+For enterprise deployment, the following must be implemented:
+* **Transport Encryption**: All `ws://` endpoints must be upgraded to `wss://` (WebSocket Secure) with proper TLS termination at the load balancer.
+* **Authentication**: Introduce JWT (JSON Web Token) authorization for the WebSocket handshake to prevent unauthorized API consumption.
+* **PII Redaction**: If forensic reasoning logs (Groq LLM) are persisted, a local PII redaction layer must scrub names and numbers before storage.
+
+---
+
+## Limitations
+
+* **Hard-Negative Spoof Engines**: The model struggles with certain ultra-high fidelity internal systems like Optispeech (26.9% recall), defining the upper boundary of our current zero-day detection capability.
+* **Latency Spikes**: Running entirely on `DEVICE=cpu` without a GPU can introduce inference latency exceeding the 250ms target for 4-second chunk processing.
+* **Language Biases**: While 6 languages were covered, extremely low-resource dialects not represented in the Kathbath or Gramvaani datasets may occasionally trigger false alarms due to novel phonetic structures.
+
+---
+
+## Roadmap
+
+### Near Term
+- [ ] Stabilize the offline `.wav` file analysis endpoint for batch evaluation.
+- [ ] Add explicit language-identification logging to trace dialect-based false positive rates.
+
+### Medium Term
+- [ ] Export both WavLM and LFCC experts to ONNX runtime.
+- [ ] Implement Mobile TFLite / ONNX inference directly on Android to eliminate the backend network dependency.
+
+### Long Term
+- [ ] Integrate a tamper-evident blockchain audit log for call verification signatures.
+- [ ] Production integration with enterprise telecom SIP trunks.
 
 ---
 
