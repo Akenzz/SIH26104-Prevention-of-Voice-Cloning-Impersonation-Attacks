@@ -1,9 +1,8 @@
 import { Outlet, NavLink } from 'react-router-dom';
-import { LayoutDashboard, Radio, FileAudio, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, FileAudio, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
 
 const navItems = [
   { path: '/platform', label: 'Overview', icon: LayoutDashboard },
-  { path: '/platform/live-monitor', label: 'Live Monitor', icon: Radio },
   { path: '/platform/file-analysis', label: 'File Analysis', icon: FileAudio },
   { path: '/platform/settings', label: 'Settings', icon: SettingsIcon },
 ];

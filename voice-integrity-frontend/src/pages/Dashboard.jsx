@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Radio, FileAudio, Settings, ShieldCheck, Activity } from 'lucide-react';
+import { FileAudio, Settings, ShieldCheck, Activity } from 'lucide-react';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 
 export default function Dashboard() {
@@ -15,24 +15,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Link to="/platform/live-monitor" className="block group">
-          <Card className="h-full transition-colors group-hover:border-zinc-700 group-hover:bg-zinc-800/20">
-            <CardContent className="p-6 md:p-8 flex flex-col items-center text-center gap-4">
-              <div className="h-12 w-12 md:h-16 md:w-16 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-300 group-hover:text-zinc-100 transition-colors">
-                <Radio size={24} className="md:w-8 md:h-8" />
-              </div>
-              <div>
-                <h2 className="text-lg md:text-xl font-semibold text-zinc-100 mb-2">Live Monitor</h2>
-                <p className="text-zinc-400 text-sm md:text-base">
-                  Connect to the real-time WebSocket stream to analyze microphone audio continuously.
-                  Ideal for live call center integrations and real-time alerts.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-
+      <div className="grid grid-cols-1 gap-6">
         <Link to="/platform/file-analysis" className="block group">
           <Card className="h-full transition-colors group-hover:border-zinc-700 group-hover:bg-zinc-800/20">
             <CardContent className="p-6 md:p-8 flex flex-col items-center text-center gap-4">
