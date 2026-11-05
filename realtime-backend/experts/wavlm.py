@@ -71,15 +71,8 @@ def _resolve_wavlm_checkpoint(cache_dir: Path) -> Path:
     spec = HUB_EXPERTS["wavlm"]
     local_path = _LOCAL_CHECKPOINT
     if local_path.exists() and local_path.stat().st_size > 0:
-        if not _remote_checkpoint_is_stale(spec["repo_id"], spec["filename"], local_path):
-            logger.info("WavLM: using LOCAL checkpoint: %s", local_path)
-            return local_path
-        logger.info(
-            "WavLM: local checkpoint is stale at %s — redownloading from Hub (%s/%s).",
-            local_path,
-            spec["repo_id"],
-            spec["filename"],
-        )
+        logger.info("WavLM: using LOCAL checkpoint: %s", local_path)
+        return local_path
     else:
         logger.info(
             "WavLM: local checkpoint not found at %s — downloading from Hub.",
