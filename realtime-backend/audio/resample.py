@@ -169,3 +169,94 @@ class StreamingPolyphaseResampler:
         # restarting at 0, which is what caused the per-frame drift.
         self._phase += out.size * self.down - filtered.size
         return out.astype(np.float32)
+
+def rms_normalize(samples: np.ndarray, target_rms: float = 0.073) -> np.ndarray:
+    """Normalize audio to corpus median RMS (0.073), matching training parity.
+
+    A clipping guard (0.99 peak ceiling) prevents distortion from extreme gain increases.
+    """
+    audio = np.asarray(samples, dtype=np.float32)
+    rms = float(np.sqrt(np.mean(np.square(audio)) + 1e-12))
+    if rms < 1e-6:
+        return audio
+    scaled = audio * (target_rms / rms)
+    peak = float(np.max(np.abs(scaled)))
+    if peak > 0.99:
+        scaled = scaled * (0.99 / peak)
+    return scaled.astype(np.float32)
+
+
+def pad_or_tile_window(samples: np.ndarray, target_samples: int) -> np.ndarray:
+    """Tile or pad audio to target_samples length.
+
+    If audio is shorter than target_samples, repeats it circularly (tiling)
+    matching eval_deployment_path.py and score_clips.py, preventing artificial
+    step discontinuities and VAD energy drops caused by cold zero-padding.
+    """
+    audio = np.asarray(samples, dtype=np.float32).reshape(-1)
+    if audio.size == 0:
+        return np.zeros(target_samples, dtype=np.float32)
+    if audio.size < target_samples:
+        reps = int(np.ceil(target_samples / audio.size))
+        return np.tile(audio, reps)[:target_samples].astype(np.float32)
+    return audio
+
+
+def decode_audio_bytes(contents: bytes) -> tuple[np.ndarray, int]:
+    """Decode audio bytes to float32 numpy array and sample rate with multi-format fallback.
+
+    Supports WAV, FLAC, OGG, MP3, AIFF via SoundFile, with fallbacks to scipy.io.wavfile,
+    torchaudio, and librosa for non-standard formats and headers.
+    """
+    if not contents:
+        raise ValueError("Empty audio payload")
+
+    import io
+
+    # 1. Primary: SoundFile
+    try:
+        import soundfile as sf
+        audio, sr = sf.read(io.BytesIO(contents), dtype="float32")
+        return audio, int(sr)
+    except Exception as e_sf:
+        last_err = e_sf
+
+    # 2. Fallback: scipy.io.wavfile (handles non-standard RIFF wav chunk headers)
+    try:
+        import scipy.io.wavfile as wavfile
+        sr, data = wavfile.read(io.BytesIO(contents))
+        if data.dtype == np.int16:
+            audio = data.astype(np.float32) / 32768.0
+        elif data.dtype == np.int32:
+            audio = data.astype(np.float32) / 2147483648.0
+        elif data.dtype == np.uint8:
+            audio = (data.astype(np.float32) - 128.0) / 128.0
+        else:
+            audio = data.astype(np.float32)
+        return audio, int(sr)
+    except Exception:
+        pass
+
+    # 3. Fallback: torchaudio
+    try:
+        import torchaudio
+        waveform, sr = torchaudio.load(io.BytesIO(contents))
+        audio = waveform.numpy()
+        if audio.ndim == 2:
+            audio = audio.T
+        return audio.astype(np.float32), int(sr)
+    except Exception:
+        pass
+
+    # 4. Fallback: librosa
+    try:
+        import librosa
+        audio, sr = librosa.load(io.BytesIO(contents), sr=None, mono=False)
+        if audio.ndim == 2:
+            audio = audio.T
+        return audio.astype(np.float32), int(sr)
+    except Exception:
+        pass
+
+    raise ValueError(f"Failed to decode audio: {last_err}")
+

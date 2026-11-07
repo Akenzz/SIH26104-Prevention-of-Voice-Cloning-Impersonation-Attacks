@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import soundfile as sf
 
-from audio.resample import to_mono, to_target_rate
+from audio.resample import decode_audio_bytes, pad_or_tile_window, rms_normalize, to_mono, to_target_rate
 from audio.ring_buffer import RingBuffer
 from calibration import (
     assert_calibrator_gates_match,
@@ -230,14 +230,14 @@ async def predict_file(file: UploadFile = File(...)):
 
     try:
         contents = await file.read()
-        audio, sr = sf.read(io.BytesIO(contents), dtype="float32")
+        audio, sr = decode_audio_bytes(contents)
     except Exception as e:
         logger.warning(f"Failed to load uploaded file: {e}")
-        return JSONResponse({"error": "Failed to decode audio"}, status_code=400)
+        return JSONResponse({"error": f"Failed to decode audio: {e}"}, status_code=400)
 
     try:
         # 1. Resample to 16kHz mono using the exact same torchaudio pipeline as evaluate_slices.py
-        # sf.read returns [frames, channels], to_mono makes it [frames]
+        # decode_audio_bytes returns [frames, channels] or [frames], to_mono makes it [frames]
         channels = 1 if audio.ndim == 1 else audio.shape[1]
         mono = to_mono(audio, channels)
         
@@ -248,12 +248,15 @@ async def predict_file(file: UploadFile = File(...)):
             
         resampled = audio_tensor.squeeze(0).numpy()
 
-        # 2. Extract ALL windows
+        # 2. RMS normalize to corpus median (0.073) with 0.99 peak ceiling, matching training parity
+        resampled = rms_normalize(resampled, target_rms=0.073)
+
+        # 3. Extract ALL windows (circular tile padding for short clips)
         window_samples = settings.window_samples
         hop_samples = settings.hop_samples
         
         if len(resampled) < window_samples:
-            resampled = np.pad(resampled, (0, window_samples - len(resampled)))
+            resampled = pad_or_tile_window(resampled, window_samples)
             
         buffer = RingBuffer(window_samples, hop_samples)
         windows = buffer.push(resampled)

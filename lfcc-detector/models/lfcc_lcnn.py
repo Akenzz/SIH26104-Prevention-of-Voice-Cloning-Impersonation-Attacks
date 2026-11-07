@@ -166,16 +166,26 @@ class LFCCLCNNWithFeatureExtraction(nn.Module):
         n_lfcc: int = 20,
         with_deltas: bool = True,
         embedding_dim: int = 128,
-        dropout: float = 0.75
+        dropout: float = 0.75,
+        use_cmvn: bool = False,
     ):
         super().__init__()
         from .features import LFCCWithDelta, LFCCExtractor
 
+        self.use_cmvn = use_cmvn
         if with_deltas:
-            self.feature_extractor = LFCCWithDelta(sample_rate=sample_rate, n_lfcc=n_lfcc)
+            self.feature_extractor = LFCCWithDelta(
+                sample_rate=sample_rate,
+                n_lfcc=n_lfcc,
+                use_cmvn=use_cmvn,
+            )
             n_features = n_lfcc * 3
         else:
-            self.feature_extractor = LFCCExtractor(sample_rate=sample_rate, n_lfcc=n_lfcc)
+            self.feature_extractor = LFCCExtractor(
+                sample_rate=sample_rate,
+                n_lfcc=n_lfcc,
+                use_cmvn=use_cmvn,
+            )
             n_features = n_lfcc
 
         self.classifier = LFCCLCNN(

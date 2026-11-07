@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
-import { UploadCloud, FileAudio, AlertCircle, BarChart3, ChevronDown, Sliders, CheckCircle, XCircle, AlertTriangle, Activity } from 'lucide-react';
+import { UploadCloud, FileAudio, AlertCircle, BarChart3, ChevronDown, Sliders, CheckCircle, XCircle, AlertTriangle, Activity, Mic, Square, RotateCcw, Volume2 } from 'lucide-react';
+import { encodeWavFromFloat32, concatFloat32 } from '../lib/wavEncoder';
 import { API_CONFIG } from '../config';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { Badge, RiskBadge } from '../components/ui/Badge';
@@ -23,7 +24,104 @@ export default function FileAnalysis() {
   const [expandedExpert, setExpandedExpert] = useState(null);
   const [selectedMode, setSelectedMode] = useState('heuristic_avg'); // which signal drives overall line
   const [health, setHealth] = useState(null);
+  const [ingestMode, setIngestMode] = useState('upload'); // 'upload' | 'record'
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [audioPreviewUrl, setAudioPreviewUrl] = useState(null);
+
   const fileInputRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const processorNodeRef = useRef(null);
+  const recordedChunksRef = useRef([]);
+  const timerRef = useRef(null);
+
+  // Clean up recording resources on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach(t => t.stop());
+      if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
+      if (audioPreviewUrl) URL.revokeObjectURL(audioPreviewUrl);
+    };
+  }, [audioPreviewUrl]);
+
+  const startRecording = async () => {
+    try {
+      setError(null);
+      setResult(null);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioCtx();
+      audioContextRef.current = audioCtx;
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      // Buffer size 4096 gives low-latency continuous PCM frames
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processorNodeRef.current = processor;
+
+      recordedChunksRef.current = [];
+      processor.onaudioprocess = (e) => {
+        const input = e.inputBuffer.getChannelData(0);
+        recordedChunksRef.current.push(new Float32Array(input));
+      };
+
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
+
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(() => {
+        setRecordingSeconds(s => s + 1);
+      }, 1000);
+    } catch (err) {
+      setError('Microphone access failed: ' + (err.message || err));
+    }
+  };
+
+  const stopRecording = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (processorNodeRef.current) {
+      processorNodeRef.current.disconnect();
+      processorNodeRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(t => t.stop());
+      mediaStreamRef.current = null;
+    }
+
+    const sampleRate = audioContextRef.current?.sampleRate || 16000;
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+
+    setIsRecording(false);
+
+    const allSamples = concatFloat32(recordedChunksRef.current);
+    if (allSamples.length > 0) {
+      const wavBlob = encodeWavFromFloat32(allSamples, sampleRate);
+      const recordedFile = new File([wavBlob], `mic_recording_${Date.now()}.wav`, { type: 'audio/wav' });
+      setFile(recordedFile);
+      if (audioPreviewUrl) URL.revokeObjectURL(audioPreviewUrl);
+      setAudioPreviewUrl(URL.createObjectURL(wavBlob));
+    }
+  };
+
+  const clearSelection = () => {
+    setFile(null);
+    setResult(null);
+    if (audioPreviewUrl) {
+      URL.revokeObjectURL(audioPreviewUrl);
+      setAudioPreviewUrl(null);
+    }
+  };
 
   useEffect(() => {
     axios.get(API_CONFIG.BACKEND_URL + '/health').then(r => {
@@ -189,56 +287,140 @@ export default function FileAnalysis() {
       {/* Upload Zone */}
       <Card>
         <CardContent>
-          <div
-            className={`border-2 border-dashed rounded-lg p-10 flex flex-col items-center justify-center transition-colors cursor-pointer ${isDragging ? 'border-zinc-500 bg-zinc-800/50' : 'border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/20'
+          {/* Mode Switcher: Upload File vs Record from Mic */}
+          <div className="flex items-center gap-2 mb-4 p-1 bg-zinc-900 border border-zinc-800 rounded-lg w-fit">
+            <button
+              type="button"
+              onClick={() => { setIngestMode('upload'); }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                ingestMode === 'upload' ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
               }`}
-            onDragEnter={handleDrag}
-            onDragLeave={handleDrag}
-            onDragOver={handleDrag}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              accept="audio/*"
-              className="hidden"
-            />
-
-            {file ? (
-              <div className="flex flex-col items-center gap-3">
-                <div className="h-16 w-16 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-300">
-                  <FileAudio size={32} />
-                </div>
-                <div className="text-center">
-                  <p className="text-zinc-200 font-medium">{file.name}</p>
-                  <p className="text-zinc-500 text-sm">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-3">
-                <div className="h-16 w-16 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-500">
-                  <UploadCloud size={32} />
-                </div>
-                <div className="text-center">
-                  <p className="text-zinc-300 font-medium">Click or drag audio file here</p>
-                  <p className="text-zinc-500 text-sm">Supports WAV, FLAC, MP3</p>
-                </div>
-              </div>
-            )}
+            >
+              <UploadCloud size={14} />
+              Upload Audio File
+            </button>
+            <button
+              type="button"
+              onClick={() => { setIngestMode('record'); }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                ingestMode === 'record' ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <Mic size={14} />
+              Record with Microphone
+            </button>
           </div>
+
+          {ingestMode === 'upload' ? (
+            <div
+              className={`border-2 border-dashed rounded-lg p-10 flex flex-col items-center justify-center transition-colors cursor-pointer ${
+                isDragging ? 'border-zinc-500 bg-zinc-800/50' : 'border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/20'
+              }`}
+              onDragEnter={handleDrag}
+              onDragLeave={handleDrag}
+              onDragOver={handleDrag}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept="audio/*"
+                className="hidden"
+              />
+
+              {file ? (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="h-16 w-16 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-300">
+                    <FileAudio size={32} />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-zinc-200 font-medium">{file.name}</p>
+                    <p className="text-zinc-500 text-sm">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="h-16 w-16 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-500">
+                    <UploadCloud size={32} />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-zinc-300 font-medium">Click or drag audio file here</p>
+                    <p className="text-zinc-500 text-sm">Supports WAV, MP3, FLAC, OGG, M4A, WEBM</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="border border-zinc-800 rounded-lg p-8 flex flex-col items-center justify-center bg-zinc-900/30">
+              <div className="flex flex-col items-center gap-4 text-center">
+                <div
+                  className={`h-20 w-20 rounded-full flex items-center justify-center transition-all ${
+                    isRecording
+                      ? 'bg-red-500/20 text-red-400 border border-red-500/40 animate-pulse'
+                      : file
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                      : 'bg-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  <Mic size={36} />
+                </div>
+
+                <div>
+                  <p className="text-zinc-200 font-medium text-lg">
+                    {isRecording ? 'Recording Voice...' : file ? 'Voice Audio Ready' : 'Direct Microphone Capture'}
+                  </p>
+                  <p className="text-zinc-400 text-sm mt-1">
+                    {isRecording
+                      ? `Elapsed: ${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, '0')} (Speak for 4-10 seconds)`
+                      : file
+                      ? `${file.name} (${(file.size / 1024).toFixed(1)} KB)`
+                      : 'Speak naturally into your microphone to test your own voice against the deepfake models.'}
+                  </p>
+                </div>
+
+                {audioPreviewUrl && (
+                  <div className="w-full max-w-md mt-2">
+                    <audio controls src={audioPreviewUrl} className="w-full h-10 rounded-lg" />
+                  </div>
+                )}
+
+                <div className="flex items-center gap-3 mt-2">
+                  {!isRecording ? (
+                    <Button
+                      variant={file ? 'outline' : 'primary'}
+                      onClick={startRecording}
+                      className="flex items-center gap-2"
+                    >
+                      <Mic size={16} />
+                      {file ? 'Re-record' : 'Start Recording'}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="danger"
+                      onClick={stopRecording}
+                      className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white"
+                    >
+                      <Square size={16} />
+                      Stop Recording ({recordingSeconds}s)
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="mt-4 flex justify-end gap-3">
             {file && (
-              <Button variant="ghost" onClick={() => { setFile(null); setResult(null); }}>
+              <Button variant="ghost" onClick={clearSelection}>
                 Clear
               </Button>
             )}
             <Button
               variant="primary"
               onClick={(e) => { e.stopPropagation(); processFile(); }}
-              disabled={!file}
+              disabled={!file || isRecording}
               isLoading={isProcessing}
             >
               Analyze Audio

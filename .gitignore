@@ -147,7 +147,7 @@ hf_cache/
 
 # Scratch / one-off diagnostic scripts at repo root
 test_ssl_load.py
-test_*.py
+/test_*.py
 
 # Training outputs
 checkpoints/
