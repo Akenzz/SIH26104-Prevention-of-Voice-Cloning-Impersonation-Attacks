@@ -12,12 +12,12 @@ from config import ARTIFACTS_DIR
 
 
 def _state() -> ConnectionState:
-    settings = Settings(experts=["dummy"], fusion_mode="single")
+    settings = Settings(experts=["dummy"], fusion_mode="single", hop_sec=0.5)
     return ConnectionState(
         settings=settings,
         experts={"dummy": DummyExpert(seed=0)},
         fusion=load_fusion(ARTIFACTS_DIR / "fusion.json"),
-        calibrator=load_calibrator(ARTIFACTS_DIR / "calibrator.json"),
+        calibrator=load_calibrator(ARTIFACTS_DIR / "calibrator_hybrid_maxbr.json"),
         policy=load_policy(ARTIFACTS_DIR / "policy.json"),
     )
 

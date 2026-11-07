@@ -247,7 +247,8 @@ def test_heuristic_avg_50_50_fusion_and_hybrid_mirroring():
     assert "hybrid" in result.scores
 
     # 50/50 fusion: fused = (2.0 * 0.5 + 4.0 * 0.5) / 1.0 = 3.0
-    assert result.fused_logit == pytest.approx(3.0)
+    # Reliability fusion (0.25 WavLM + 0.75 LFCC): fused = (2.0 * 0.25 + 4.0 * 0.75) / 1.0 = 3.5
+    assert result.fused_logit == pytest.approx(3.5)
 
 
 def test_heuristic_avg_strong_agreement_override():

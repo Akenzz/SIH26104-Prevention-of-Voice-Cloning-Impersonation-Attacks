@@ -6,8 +6,9 @@
 # the frontend in this window. Ctrl+C stops the frontend; close the backend
 # window (or use -Stop) to stop the backend.
 #
-#   .\start_all.ps1 -Stop        kill whatever is already on :8000 and :5173
+#   .\start_all.ps1 -Stop        kill whatever is already on :8000, :8001, and :5173
 #   .\start_all.ps1 -SkipInstall skip pip install / npm install (faster restarts)
+#   .\start_all.ps1 -WithRelay   also launch the audio relay service on port 8001
 #
 # No environment variables needed. The first run downloads both checkpoints from
 # Hugging Face (~400 MB) into realtime-backend/model_cache/ and can take a few
@@ -16,12 +17,14 @@
 
 param(
     [switch]$Stop,
-    [switch]$SkipInstall
+    [switch]$SkipInstall,
+    [switch]$WithRelay
 )
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $backendDir = Join-Path $root "realtime-backend"
+$relayDir = Join-Path $root "relay-service"
 $frontendDir = Join-Path $root "voice-integrity-frontend"
 
 function Stop-Port($port) {
@@ -38,12 +41,17 @@ function Stop-Port($port) {
 }
 
 Stop-Port 8000
+Stop-Port 8001
 Stop-Port 5173
 if ($Stop) { Write-Host "Stopped." -ForegroundColor Green; exit 0 }
 
 if (-not $SkipInstall) {
     Write-Host "Installing backend dependencies..." -ForegroundColor Cyan
     python -m pip install -q -r (Join-Path $backendDir "requirements.txt")
+    if ($WithRelay) {
+        Write-Host "Installing relay dependencies..." -ForegroundColor Cyan
+        python -m pip install -q -r (Join-Path $relayDir "requirements.txt")
+    }
     if (-not (Test-Path (Join-Path $frontendDir "node_modules"))) {
         Write-Host "Installing frontend dependencies..." -ForegroundColor Cyan
         Push-Location $frontendDir; npm install; Pop-Location
@@ -55,6 +63,14 @@ Start-Process -FilePath "powershell" -ArgumentList @(
     "-NoExit", "-Command",
     "Set-Location '$backendDir'; python -m uvicorn server:app --host 0.0.0.0 --port 8000"
 )
+
+if ($WithRelay) {
+    Write-Host "Starting relay service in a new window..." -ForegroundColor Cyan
+    Start-Process -FilePath "powershell" -ArgumentList @(
+        "-NoExit", "-Command",
+        "Set-Location '$relayDir'; python -m uvicorn server:app --host 0.0.0.0 --port 8001"
+    )
+}
 
 # First run downloads ~400 MB, so wait generously rather than failing fast.
 Write-Host "Waiting for the backend to come up (first run downloads models)..." -NoNewline
@@ -82,10 +98,12 @@ foreach ($e in $h.expert_details) {
 }
 Write-Host ""
 Write-Host "Backend  : http://localhost:8000/health"
+if ($WithRelay) {
+    Write-Host "Relay    : http://localhost:8001/health"
+}
 Write-Host "Frontend : https://localhost:5173   (self-signed cert - click through the warning)"
 Write-Host "Ctrl+C stops the frontend; close the backend window to stop the backend."
 Write-Host ""
 
 Set-Location $frontendDir
 npm run dev
-

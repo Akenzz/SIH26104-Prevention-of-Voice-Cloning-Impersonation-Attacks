@@ -3,6 +3,7 @@ LFCC (Linear Frequency Cepstral Coefficients) feature extraction.
 
 LFCC is similar to MFCC but uses a linear frequency scale instead of mel scale,
 preserving high-frequency details where voice cloning artifacts often appear.
+Includes optional Cepstral Mean and Variance Normalization (CMVN).
 """
 
 import torch
@@ -10,6 +11,29 @@ import torch.nn as nn
 import torchaudio
 import numpy as np
 from typing import Optional
+
+
+def apply_cmvn(features: torch.Tensor, eps: float = 1e-10) -> torch.Tensor:
+    """
+    Apply Cepstral Mean and Variance Normalization (CMVN) along the time axis.
+
+    Normalizes each cepstral coefficient channel to zero mean and unit variance
+    over the duration of the audio window:
+        c_norm(t) = (c(t) - mean(c)) / (std(c) + eps)
+
+    This removes stationary channel effects, acoustic coloration, room acoustics,
+    and recording gain/volume shifts while preserving dynamic vocoder cues.
+
+    Args:
+        features: Tensor of shape (batch, channels, time_frames) or (channels, time_frames)
+        eps: Small constant for numerical stability
+
+    Returns:
+        Tensor of identical shape with zero mean and unit variance per channel.
+    """
+    mean = features.mean(dim=-1, keepdim=True)
+    std = features.std(dim=-1, keepdim=True).clamp(min=eps)
+    return (features - mean) / std
 
 
 class LFCCExtractor(nn.Module):
@@ -25,6 +49,7 @@ class LFCCExtractor(nn.Module):
         n_filters: Number of linear filters in filterbank
         f_min: Minimum frequency (Hz)
         f_max: Maximum frequency (Hz)
+        use_cmvn: Whether to apply Cepstral Mean and Variance Normalization
     """
 
     def __init__(
@@ -37,6 +62,7 @@ class LFCCExtractor(nn.Module):
         n_filters: int = 70,
         f_min: float = 0.0,
         f_max: Optional[float] = None,
+        use_cmvn: bool = False,
     ):
         super().__init__()
 
@@ -48,6 +74,7 @@ class LFCCExtractor(nn.Module):
         self.n_filters = n_filters
         self.f_min = f_min
         self.f_max = f_max or (sample_rate / 2)
+        self.use_cmvn = use_cmvn
 
         # Use torchaudio's LFCC transform
         # Pass STFT parameters via speckwargs
@@ -81,6 +108,9 @@ class LFCCExtractor(nn.Module):
         # Extract LFCC
         lfcc = self.lfcc_transform(waveform)
 
+        if self.use_cmvn:
+            lfcc = apply_cmvn(lfcc)
+
         return lfcc
 
 
@@ -101,9 +131,11 @@ class LFCCWithDelta(nn.Module):
         n_filters: int = 70,
         f_min: float = 0.0,
         f_max: Optional[float] = None,
+        use_cmvn: bool = False,
     ):
         super().__init__()
 
+        self.use_cmvn = use_cmvn
         self.lfcc_extractor = LFCCExtractor(
             sample_rate=sample_rate,
             n_fft=n_fft,
@@ -113,6 +145,7 @@ class LFCCWithDelta(nn.Module):
             n_filters=n_filters,
             f_min=f_min,
             f_max=f_max,
+            use_cmvn=use_cmvn,
         )
 
         # Delta and delta-delta computation
@@ -139,6 +172,9 @@ class LFCCWithDelta(nn.Module):
         # Concatenate along feature dimension
         features = torch.cat([lfcc, delta, delta_delta], dim=1)
 
+        if self.use_cmvn:
+            features = apply_cmvn(features)
+
         return features
 
 
@@ -146,7 +182,8 @@ def extract_lfcc_features(
     audio: torch.Tensor,
     sample_rate: int = 16000,
     n_lfcc: int = 20,
-    with_deltas: bool = True
+    with_deltas: bool = True,
+    use_cmvn: bool = False,
 ) -> torch.Tensor:
     """
     Convenience function to extract LFCC features.
@@ -156,15 +193,16 @@ def extract_lfcc_features(
         sample_rate: Audio sample rate
         n_lfcc: Number of LFCC coefficients
         with_deltas: Whether to include delta and delta-delta features
+        use_cmvn: Whether to apply Cepstral Mean and Variance Normalization
 
     Returns:
         features: Tensor of shape (batch, n_features, time_frames)
                  n_features = n_lfcc (without deltas) or n_lfcc * 3 (with deltas)
     """
     if with_deltas:
-        extractor = LFCCWithDelta(sample_rate=sample_rate, n_lfcc=n_lfcc)
+        extractor = LFCCWithDelta(sample_rate=sample_rate, n_lfcc=n_lfcc, use_cmvn=use_cmvn)
     else:
-        extractor = LFCCExtractor(sample_rate=sample_rate, n_lfcc=n_lfcc)
+        extractor = LFCCExtractor(sample_rate=sample_rate, n_lfcc=n_lfcc, use_cmvn=use_cmvn)
 
     extractor.eval()
     with torch.no_grad():
@@ -185,30 +223,35 @@ if __name__ == '__main__':
     print(f"\nInput audio shape: {audio.shape}")
 
     # Test basic LFCC
-    print("\n1. Basic LFCC (no deltas):")
+    print("\n1. Basic LFCC (no deltas, no CMVN):")
     lfcc_basic = extract_lfcc_features(audio, sample_rate, n_lfcc=20, with_deltas=False)
     print(f"   Output shape: {lfcc_basic.shape}")
     print(f"   Expected: (1, 20, time_frames)")
 
     # Test LFCC with deltas
-    print("\n2. LFCC with deltas:")
+    print("\n2. LFCC with deltas (no CMVN):")
     lfcc_deltas = extract_lfcc_features(audio, sample_rate, n_lfcc=20, with_deltas=True)
     print(f"   Output shape: {lfcc_deltas.shape}")
     print(f"   Expected: (1, 60, time_frames)  # 20 * 3")
 
+    # Test LFCC with CMVN
+    print("\n3. LFCC with deltas AND CMVN:")
+    lfcc_cmvn = extract_lfcc_features(audio, sample_rate, n_lfcc=20, with_deltas=True, use_cmvn=True)
+    print(f"   Output shape: {lfcc_cmvn.shape}")
+    print(f"   Mean: {lfcc_cmvn.mean():.6f} (expected ~0.0)")
+    print(f"   Std: {lfcc_cmvn.std():.6f} (expected ~1.0)")
+
     # Test batch processing
-    print("\n3. Batch processing:")
+    print("\n4. Batch processing:")
     audio_batch = torch.randn(8, int(sample_rate * duration))
-    lfcc_batch = extract_lfcc_features(audio_batch, sample_rate, n_lfcc=20, with_deltas=True)
+    lfcc_batch = extract_lfcc_features(audio_batch, sample_rate, n_lfcc=20, with_deltas=True, use_cmvn=True)
     print(f"   Input batch shape: {audio_batch.shape}")
     print(f"   Output batch shape: {lfcc_batch.shape}")
     print(f"   Expected: (8, 60, time_frames)")
 
     # Check feature statistics
-    print("\n4. Feature statistics:")
-    print(f"   Mean: {lfcc_deltas.mean():.4f}")
-    print(f"   Std: {lfcc_deltas.std():.4f}")
-    print(f"   Min: {lfcc_deltas.min():.4f}")
-    print(f"   Max: {lfcc_deltas.max():.4f}")
+    print("\n5. Feature statistics:")
+    print(f"   Raw Mean: {lfcc_deltas.mean():.4f}, Raw Std: {lfcc_deltas.std():.4f}")
+    print(f"   CMVN Mean: {lfcc_cmvn.mean():.4f}, CMVN Std: {lfcc_cmvn.std():.4f}")
 
     print("\n[PASS] LFCC extraction tests passed!")

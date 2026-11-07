@@ -9,6 +9,7 @@ import { narrateRemote } from '../lib/narrateRemote';
 import { API_CONFIG } from '../config';
 import ReasoningLog from '../components/panels/ReasoningLog';
 import { buildSpoofWorkletCode, SPOOF_PROFILE_LABELS, DEFAULT_SPOOF_PROFILE } from '../lib/spoofDsp';
+import { concatFloat32, encodeWavFromFloat32 } from '../lib/wavEncoder';
 
 // The capture AudioWorklet doubles as the "Talk as Teammate 3 (Spoof)" engine:
 // clean pass-through when spoof is off, and the MockRVC pitch/formant/artifact
@@ -23,46 +24,7 @@ const workletCode = buildSpoofWorkletCode();
 // monitoring session and, on stop, mux them into a 16-bit PCM WAV Blob so the
 // operator can play back precisely what the model scored. Nothing touches disk;
 // the Blob is revoked the moment the next session starts.
-function concatFloat32(chunks) {
-  let total = 0;
-  for (const c of chunks) total += c.length;
-  const out = new Float32Array(total);
-  let offset = 0;
-  for (const c of chunks) {
-    out.set(c, offset);
-    offset += c.length;
-  }
-  return out;
-}
-
-function encodeWavFromFloat32(samples, sampleRate) {
-  const dataSize = samples.length * 2; // 16-bit mono
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-  const writeString = (offset, str) => {
-    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
-  };
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true);            // PCM fmt chunk size
-  view.setUint16(20, 1, true);             // format = PCM
-  view.setUint16(22, 1, true);             // channels = mono
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true); // byte rate (sr * blockAlign)
-  view.setUint16(32, 2, true);             // block align (mono * 16-bit)
-  view.setUint16(34, 16, true);            // bits per sample
-  writeString(36, 'data');
-  view.setUint32(40, dataSize, true);
-  let offset = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    offset += 2;
-  }
-  return new Blob([view], { type: 'audio/wav' });
-}
+// Uses shared encodeWavFromFloat32 and concatFloat32 from lib/wavEncoder
 
 export default function LiveMonitor() {
   const [isRecording, setIsRecording] = useState(false);
